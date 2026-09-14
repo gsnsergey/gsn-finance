@@ -23,8 +23,10 @@ for (const name of Object.keys(TABLE_CONFIGS)) {
 // transactions — отдельный (фильтры + обновление баланса)
 router.use('/transactions', transactionsRouter)
 
-// Импорт портфеля из Т-Инвестиций (разовая команда)
-router.use('/holdings/import/tinvest', tInvestRouter)
+// Импорт портфеля из Т-Инвестиций (разовая команда).
+// URL /api/holdings/import/tinkoff — provider-совместимо (broker_credentials.provider='tinkoff'),
+// исторически назывался 'tinvest' (от tinkoff-invest-api), переименован в коммите с broker_credentials.
+router.use('/holdings/import/tinkoff', tInvestRouter)
 
 // Импорт портфеля из БКС (разовая команда, brokerAccountId в URL/теле)
 router.use('/holdings/import/bcs', bcsRouter)

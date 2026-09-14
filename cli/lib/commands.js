@@ -258,7 +258,7 @@ commands['t-invest'] = async (f) => {
   const dryRun = !!(f.bool && f.bool['dry-run'])
   console.log(`→ Импорт портфеля из Т-Инвестиций${dryRun ? ' (DRY-RUN, без записи)' : ''}...`)
 
-  const result = await api.post('/api/holdings/import/tinvest', { dryRun })
+  const result = await api.post('/api/holdings/import/tinkoff', { dryRun })
   const { summary } = result
 
   console.log('')

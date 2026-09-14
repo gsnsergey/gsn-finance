@@ -36,7 +36,7 @@ app.get('/api', (req, res) => {
       'CRUD   /api/loans',
       'CRUD   /api/subscriptions',
       'CRUD   /api/obligations',
-      'POST   /api/holdings/import/tinvest',
+      'POST   /api/holdings/import/tinkoff',
       'POST   /api/holdings/import/bcs',
       'CRUD   /api/broker-credentials'
     ]

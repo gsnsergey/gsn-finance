@@ -125,7 +125,7 @@ const CONFIGS = {
     // Кнопка «Обновить» (legacy, single broker). Можно убрать, если есть `importMenu`.
     refresh: {
       label: 'Обновить',
-      endpoint: '/api/holdings/import/tinvest',
+      endpoint: '/api/holdings/import/tinkoff',
       method: 'POST',
       body: {},
       successMessage: 'Портфель обновлён'
@@ -843,7 +843,7 @@ function wireFormButton(root, cfg, endpoint, record, render) {
 }
 
 // Кнопка «Обновить» — дёргает внешний эндпоинт и перерисовывает список.
-// Используется для портфеля: refresh → POST /api/holdings/import/tinvest
+// Используется для портфеля: refresh → POST /api/holdings/import/tinkoff
 // (тянет свежие цены из Т-Инвестиций), затем GET /api/holdings + rerender.
 function wireRefreshButton(root, cfg, render) {
   if (!cfg.refresh) return

@@ -1,5 +1,5 @@
 /**
- * POST /api/holdings/import/tinvest
+ * POST /api/holdings/import/tinkoff
  *
  * Разово подтягивает портфель из Т-Инвестиций и записывает в holdings.
  *
