@@ -32,11 +32,6 @@ export async function render(root) {
         <div class="card-value">${rub(nw.netWorth)}</div>
         <div class="card-sub">Активы − обязательства</div>
       </div>
-      <div class="card accent">
-        <div class="card-label">На картах</div>
-        <div class="card-value">${rub(accountsTotal)}</div>
-        <div class="card-sub">Все счета, с учётом операций</div>
-      </div>
       <div class="card">
         <div class="card-label">Вклады</div>
         <div class="card-value">${rub(nw.depositsTotal)}</div>
@@ -59,6 +54,11 @@ export async function render(root) {
         <div class="card-label">Подписки / мес</div>
         <div class="card-value">${rub(subsMonthly)}</div>
         <div class="card-sub">${subs.filter(s => s.active).length} активных</div>
+      </div>
+      <div class="card accent">
+        <div class="card-label">На картах</div>
+        <div class="card-value">${rub(accountsTotal)}</div>
+        <div class="card-sub">Все счета, с учётом операций</div>
       </div>
       <div class="card success">
         <div class="card-label">Доход сегодня</div>
