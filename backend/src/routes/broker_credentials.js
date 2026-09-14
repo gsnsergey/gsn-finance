@@ -179,4 +179,40 @@ router.delete('/:id', (req, res) => {
   }
 })
 
+// --- discover BCS accounts (хелпер для подбора brokerAccountId) ---
+// Не требует сохранённого токена: токен приходит в теле запроса, мы обмениваем
+// его через Keycloak и возвращаем список id+name из /accounts.
+// Это решает замкнутый круг: раньше, чтобы получить brokerAccountId,
+// нужно было сначала его ввести в форму.
+router.post('/discover-bcs-accounts', async (req, res) => {
+  const body = req.body || {}
+  const token = String(body.token ?? '').trim()
+  if (!token) {
+    return res.status(400).json({ error: 'missing_token', message: 'Передайте refresh_token в теле запроса' })
+  }
+  try {
+    const { authenticate } = await import('../bcs/index.js')
+    const { access_token } = await authenticate(token)
+    const acctsRes = await fetch('https://be.broker.ru/trade-api-bff-operations/api/v1/accounts', {
+      headers: { 'Authorization': `Bearer ${access_token}` }
+    })
+    if (!acctsRes.ok) {
+      const text = await acctsRes.text().catch(() => '')
+      return res.status(502).json({
+        error: 'bcs_accounts_failed',
+        message: `BCS /accounts вернул ${acctsRes.status}: ${text || acctsRes.statusText}`
+      })
+    }
+    const accounts = await acctsRes.json()
+    res.json({
+      accounts: Array.isArray(accounts) ? accounts.map(a => ({
+        id: a.id,
+        name: a.name || a.type || null
+      })) : []
+    })
+  } catch (e) {
+    res.status(502).json({ error: 'bcs_error', message: e.message })
+  }
+})
+
 export default router

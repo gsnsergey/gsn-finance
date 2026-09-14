@@ -283,3 +283,84 @@ commands['t-invest'] = async (f) => {
   }
   ok(dryRun ? 'DRY-RUN завершён' : 'Импорт завершён')
 }
+
+// ===== BCS =====
+commands['bcs'] = async (f) => {
+  const sub = (f._ && f._[0]) || 'list-accounts'
+  if (sub === 'list-accounts') {
+    return commands['bcs-list-accounts'](f)
+  }
+  if (sub === 'pull') {
+    return commands['bcs-pull'](f)
+  }
+  throw new Error(`Unknown bcs subcommand: "${sub}". Доступно: list-accounts, pull`)
+}
+
+// Список брокерских счетов БКС.
+//
+// Аргументы:
+//   --refresh-token <token>  refresh_token из БКС Онлайн (Trade API)
+//   или через env: BCS_REFRESH_TOKEN
+//   или через stdin (если ни того, ни другого нет)
+//
+// Делает:
+//   1) Обменивает refresh_token на access_token через Keycloak
+//   2) GET /accounts на BCS API
+//   3) Печатает список id + name в формате "id  name"
+//
+// Использование:
+//   fin bcs list-accounts --refresh-token eyJ...
+//   BCS_REFRESH_TOKEN=eyJ... fin bcs list-accounts
+//   echo "eyJ..." | fin bcs list-accounts
+//
+// После получения ID — обновите brokerAccountId в Настройки → Интеграции.
+commands['bcs-list-accounts'] = async (f) => {
+  const { authenticate } = await import('../../backend/src/bcs/index.js')
+  let token = f['refresh-token'] || process.env.BCS_REFRESH_TOKEN
+  if (!token) {
+    // Читаем из stdin (если не TTY)
+    if (!process.stdin.isTTY) {
+      const chunks = []
+      for await (const chunk of process.stdin) chunks.push(chunk)
+      token = Buffer.concat(chunks).toString().trim()
+    }
+  }
+  if (!token) {
+    throw new Error('Не задан refresh_token. Передайте через --refresh-token, env BCS_REFRESH_TOKEN или stdin.')
+  }
+
+  console.log('→ Обмениваю refresh_token на access_token...')
+  const { access_token } = await authenticate(token)
+  console.log('✓ access_token получен')
+
+  console.log('→ Запрашиваю /accounts у BCS API...')
+  const res = await fetch('https://be.broker.ru/trade-api-bff-operations/api/v1/accounts', {
+    headers: { 'Authorization': `Bearer ${access_token}` }
+  })
+  if (!res.ok) {
+    throw new Error(`BCS /accounts вернул ${res.status}: ${await res.text().catch(() => '')}`)
+  }
+  const accounts = await res.json()
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    console.log('БКС не вернул ни одного счёта.')
+    return
+  }
+
+  console.log('')
+  console.log(`Найдено счетов: ${accounts.length}`)
+  console.log('')
+  for (const a of accounts) {
+    console.log(`  ${String(a.id).padEnd(20)} ${a.name || a.type || '(без названия)'}`)
+  }
+  console.log('')
+  console.log('Скопируйте нужный id и впишите его как brokerAccountId в Настройки → Интеграции.')
+}
+
+commands['bcs-pull'] = async (f) => {
+  const brokerAccountId = requireFlag(f, 'brokerAccountId')
+  const dryRun = !!(f.bool && f.bool['dry-run'])
+  console.log(`→ Импорт портфеля БКС (${brokerAccountId})${dryRun ? ' (DRY-RUN)' : ''}...`)
+  const result = await api.post('/api/holdings/import/bcs', { brokerAccountId, dryRun })
+  console.log(`Импортировано позиций: ${result.upserted ?? result.positions ?? 0}`)
+  ok(dryRun ? 'DRY-RUN завершён' : 'Импорт завершён')
+}

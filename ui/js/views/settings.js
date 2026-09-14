@@ -323,6 +323,68 @@ function openBrokerCredentialForm(root, existing, allCreds) {
         spellcheck: 'false'
       }
     ],
+    onMount: (dialog) => {
+      // Кнопка «Узнать ID счёта БКС» — появляется только для провайдера BCS
+      // и только когда в поле «Токен» что-то введено. Решает замкнутый круг:
+      // раньше чтобы получить brokerAccountId, нужно было его уже знать.
+      const providerSel = dialog.querySelector('[name="provider"]')
+      const tokenInput = dialog.querySelector('[name="token"]')
+      const brokerAccountIdInput = dialog.querySelector('[name="brokerAccountId"]')
+      if (!providerSel || !tokenInput || !brokerAccountIdInput) return
+
+      const discoverBtn = document.createElement('button')
+      discoverBtn.type = 'button'
+      discoverBtn.className = 'btn btn-sm'
+      discoverBtn.textContent = '🔍 Узнать ID счёта БКС'
+      discoverBtn.style.cssText = 'margin-top:8px;display:none;align-self:flex-start'
+
+      const updateVisibility = () => {
+        discoverBtn.style.display = (providerSel.value === 'bcs' && tokenInput.value.length > 10)
+          ? 'inline-flex' : 'none'
+      }
+      providerSel.addEventListener('change', updateVisibility)
+      tokenInput.addEventListener('input', updateVisibility)
+
+      discoverBtn.addEventListener('click', async () => {
+        if (!tokenInput.value.trim()) return
+        discoverBtn.disabled = true
+        const prevText = discoverBtn.textContent
+        discoverBtn.textContent = '… Обмениваю токен'
+        try {
+          const res = await api.post('/api/broker-credentials/discover-bcs-accounts', { token: tokenInput.value.trim() })
+          if (!res.accounts || res.accounts.length === 0) {
+            toast('БКС не вернул ни одного счёта. Проверьте refresh_token.', 'error')
+            return
+          }
+          // Если счёт один — подставляем сразу; если несколько — показываем в
+          // confirm-диалоге. Для 2-3 счетов confirm проще, чем отдельный picker.
+          if (res.accounts.length === 1) {
+            brokerAccountIdInput.value = res.accounts[0].id
+            toast(`ID счёта: ${res.accounts[0].id} — сохранено`, 'success')
+          } else {
+            const lines = res.accounts.map((a, i) => `${i + 1}. ${a.id}  —  ${a.name || '(без названия)'}`).join('\n')
+            const choice = prompt(`БКС вернул ${res.accounts.length} счетов:\n\n${lines}\n\nВведите номер (1..${res.accounts.length}):`, '1')
+            const idx = parseInt(choice, 10) - 1
+            if (idx >= 0 && idx < res.accounts.length) {
+              brokerAccountIdInput.value = res.accounts[idx].id
+              toast(`ID счёта: ${res.accounts[idx].id} — сохранено`, 'success')
+            } else {
+              toast('Отменено', 'error')
+            }
+          }
+        } catch (e) {
+          toast('Не удалось получить счета: ' + (e.message || 'ошибка'), 'error')
+        } finally {
+          discoverBtn.disabled = false
+          discoverBtn.textContent = prevText
+          updateVisibility()
+        }
+      })
+
+      // Вставляем кнопку после поля token
+      tokenInput.closest('.form-field')?.appendChild(discoverBtn)
+      updateVisibility()
+    },
     onSubmit: async (data) => {
       try {
         if (isEdit) {
