@@ -23,6 +23,24 @@ const periodLabel = v => PERIOD_LABELS[v] || v || '—'
 
 const COL_DATE = () => ({ render: v => v })
 
+// Рендеры для портфеля: цены (4 знака), суммы (2 знака + ₽), прибыль (с +/− и цветом).
+const num4 = v => (v == null ? '—' : Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 }))
+const num2 = v => (v == null ? '—' : Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+const profitRender = v => {
+  if (v == null) return '—'
+  const n = Number(v)
+  const sign = n > 0 ? '+' : (n < 0 ? '−' : '')
+  const cls = n > 0 ? 'profit-pos' : (n < 0 ? 'profit-neg' : '')
+  return `<span class="${cls}">${sign}${Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>`
+}
+const pctRender = v => {
+  if (v == null) return '—'
+  const n = Number(v)
+  const sign = n > 0 ? '+' : (n < 0 ? '−' : '')
+  const cls = n > 0 ? 'profit-pos' : (n < 0 ? 'profit-neg' : '')
+  return `<span class="${cls}">${sign}${Math.abs(n).toFixed(2)}%</span>`
+}
+
 const CONFIGS = {
   deposits: {
     title: 'Вклады',
@@ -66,9 +84,14 @@ const CONFIGS = {
       { key: 'ticker', label: 'Тикер' },
       { key: 'name', label: 'Название' },
       { key: 'quantity', label: 'Кол-во', num: true },
-      { key: 'avgPrice', label: 'Ср. цена', num: true },
+      { key: 'avgBuyPrice', label: 'Цена покупки', render: num4, num: true },
+      { key: 'currentPrice', label: 'Текущая', render: num4, num: true },
+      { key: 'currentValue', label: 'Стоимость', render: num2, num: true },
+      { key: 'profit', label: 'Прибыль', render: profitRender, num: true },
+      { key: 'profitPct', label: '%', render: pctRender, num: true },
       { key: 'currency', label: 'Валюта', render: currencyLabel }
     ],
+    sumKey: 'currentValue',
     addFieldsAsync: async () => {
       const accounts = await api.get('/api/accounts')
       // Список пакетов привязан к брокеру. Подгружаем из справочника, но пользователь
@@ -89,10 +112,11 @@ const CONFIGS = {
         },
         { name: 'ticker', label: 'Тикер', type: 'text', required: true, placeholder: 'SBER' },
         { name: 'name', label: 'Название (опционально)', type: 'text', placeholder: 'Сбербанк' },
-        // В портфеле количество и цена хранятся с точностью до 4 знаков — это
+        // В портфеле количество и цены хранятся с точностью до 4 знаков — это
         // стандартный шаг цены/лота у большинства брокеров (дробные акции, ETF).
         { name: 'quantity', label: 'Количество', type: 'number', required: true, step: '0.0001' },
-        { name: 'avgPrice', label: 'Средняя цена', type: 'number', required: true, step: '0.0001' },
+        { name: 'avgBuyPrice', label: 'Цена покупки', type: 'number', required: true, step: '0.0001', placeholder: 'средняя цена входа' },
+        { name: 'currentPrice', label: 'Текущая цена', type: 'number', step: '0.0001', placeholder: 'если не указана — равна цене покупки' },
         { name: 'currency', label: 'Валюта', type: 'combobox', placeholder: 'RUB', options: CURRENCIES, value: 'RUB' },
         {
           name: 'accountId', label: 'Банковский счёт (опционально)', type: 'select',
@@ -381,7 +405,7 @@ function isEditStr(record, cfg) {
 function getCliHint(endpoint) {
   const hints = {
     deposits: 'fin agent add-deposit --bank sber --name "Накопительный" --principal 500000 --rate 8 --opened 2026-03-01',
-    holdings: 'fin agent add-holding --broker tinkoff --ticker SBER --quantity 100 --avg-price 250',
+    holdings: 'fin agent add-holding --broker tinkoff --ticker SBER --quantity 100 --avg-price 250 [--current-price 260]',
     loans: 'fin agent add-loan --bank alfa --name "Потреб" --principal 800000 --remaining 750000 --rate 12 --monthly 15000 --payment-day 15 --opened 2025-06-01 --type consumer',
     subscriptions: 'fin agent add-subscription --name "Яндекс Плюс" --amount 299 --period monthly --next 2026-10-01',
     obligations: 'fin agent add-obligation --name "Аренда" --amount 30000 --period monthly --next 2026-10-05'

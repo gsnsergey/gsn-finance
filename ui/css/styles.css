@@ -139,6 +139,10 @@ html, body {
 .table tr:hover td { background: rgba(0,0,0,0.02); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; }
 
+/* === P/L (portfolio) === */
+.profit-pos { color: #1a8754; font-variant-numeric: tabular-nums; }
+.profit-neg { color: #c1352f; font-variant-numeric: tabular-nums; }
+
 /* === Buttons === */
 .btn {
   display: inline-flex;

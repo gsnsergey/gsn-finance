@@ -13,6 +13,11 @@ Finans CLI — управление личными финансами через
 Основные команды:
   list-accounts                       список счетов
   add-account --name X --type debit   создать счёт
+  reconcile-account --account X --balance 12000.50 [--as-of 2026-09-14]
+                                      сверить остаток: фактический → фиксация на дату
+  update-account --account X [--balance 12000.50] [--as-of 2026-09-10 | --clear-as-of]
+                                      правка счёта: баланс = сверка на сегодня,
+                                      --as-of сдвигает дату сверки, --clear-as-of снимает
   list-categories                     список категорий
 
   add-transaction --account "Tinkoff Black" --type expense --amount 1500 \\
@@ -21,7 +26,7 @@ Finans CLI — управление личными финансами через
 
   add-deposit --bank sber --name X --principal 500000 --rate 8 --opened 2026-03-01 \\
                [--capitalization] [--payout end|monthly|quarterly]
-  add-holding --broker tinkoff --ticker SBER --quantity 100 --avg-price 250
+  add-holding --broker tinkoff --ticker SBER --quantity 100 --avg-price 250 [--current-price 260]
   list-holdings
   add-loan --bank alfa --name X --principal 800000 --remaining 750000 \\
             --rate 12 --monthly 15000 --payment-day 15 --opened 2025-06-01 \\
@@ -36,6 +41,12 @@ Finans CLI — управление личными финансами через
 
 Суммы везде указываются в рублях (например, --amount 1500 = 1500.00 ₽).
 Вместо UUID можно передавать имя счёта или категории — CLI найдёт сам.
+
+Сверка остатков:
+  У счёта есть зафиксированный остаток на дату сверки (balanceAsOf); реальный
+  остаток = зафиксированный + операции после этой даты. Операция с датой внутри
+  зафиксированного периода отклоняется (409): сначала сверьте счёт заново
+  (reconcile-account) либо сдвиньте дату сверки (update-account --as-of).
 `
 
 export async function main(argv) {

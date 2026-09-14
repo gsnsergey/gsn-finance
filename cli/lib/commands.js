@@ -128,23 +128,29 @@ commands['add-deposit'] = async (f) => {
 // ===== HOLDINGS =====
 
 commands['add-holding'] = async (f) => {
+  const avgBuyPrice = Number(requireFlag(f, 'avg-price'))
+  // --current-price (опционально): если не указан, считаем равным цене покупки.
+  const currentPrice = f['current-price'] !== undefined ? Number(f['current-price']) : avgBuyPrice
   const body = {
     broker: requireFlag(f, 'broker'),
     ticker: requireFlag(f, 'ticker').toUpperCase(),
     name: f.name,
     quantity: Number(requireFlag(f, 'quantity')),
-    avgPrice: Number(requireFlag(f, 'avg-price')),
+    avgBuyPrice,
+    currentPrice,
     currency: f.currency || 'RUB'
   }
   const created = await api.post('/api/holdings', body)
-  ok(`holding ${created.broker}/${created.ticker} qty=${created.quantity} @ ${created.avgPrice}`)
+  const sign = created.profit > 0 ? '+' : (created.profit < 0 ? '−' : '')
+  ok(`holding ${created.broker}/${created.ticker} qty=${created.quantity} @ avg=${created.avgBuyPrice} now=${created.currentPrice} P/L=${sign}${Math.abs(created.profit).toFixed(2)}`)
 }
 
 commands['list-holdings'] = async () => {
   const rows = await api.get('/api/holdings')
   if (rows.length === 0) { console.log('No holdings.'); return }
   for (const h of rows) {
-    console.log(`  ${h.broker.padEnd(12)} ${h.ticker.padEnd(8)} qty=${String(h.quantity).padEnd(8)} @ ${h.avgPrice} ${h.currency}`)
+    const sign = h.profit > 0 ? '+' : (h.profit < 0 ? '−' : '')
+    console.log(`  ${h.broker.padEnd(12)} ${h.ticker.padEnd(8)} qty=${String(h.quantity).padEnd(10)} avg=${String(h.avgBuyPrice).padEnd(10)} now=${String(h.currentPrice).padEnd(10)} ${h.currency.padEnd(4)} P/L=${sign}${Math.abs(h.profit).toFixed(2)}`)
   }
 }
 
