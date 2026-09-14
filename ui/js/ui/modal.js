@@ -78,10 +78,12 @@ function renderField(f) {
       </button>
       <input type="hidden" name="${f.name}" id="${id}" value="${escapeAttr(value)}" data-category-select-value>
       <div class="category-select-dropdown" data-category-select-dropdown role="listbox" hidden>
+        <input type="text" class="category-select-search" placeholder="Поиск…" autocomplete="off" data-category-select-search>
         ${options.map(o => {
           const sel = String(o.value) === String(value) ? 'is-selected' : ''
           const html = o.html != null ? o.html : escapeHtml(o.label || '')
-          return `<div class="category-select-option ${sel}" role="option" data-value="${escapeAttr(o.value)}" data-html="${escapeAttr(o.html != null ? o.html : '')}">${html}</div>`
+          const searchLabel = (o.label != null ? String(o.label) : '').trim()
+          return `<div class="category-select-option ${sel}" role="option" data-value="${escapeAttr(o.value)}" data-html="${escapeAttr(o.html != null ? o.html : '')}" data-search-label="${escapeAttr(searchLabel)}">${html}</div>`
         }).join('')}
       </div>
     </div>`
@@ -258,19 +260,29 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
     const display = cs.querySelector('[data-category-select-display]')
     const hidden = cs.querySelector('[data-category-select-value]')
     const dropdown = cs.querySelector('[data-category-select-dropdown]')
+    const search = cs.querySelector('[data-category-select-search]')
     const options = Array.from(cs.querySelectorAll('.category-select-option'))
 
+    function resetFilter() {
+      if (search) search.value = ''
+      options.forEach(o => { o.style.display = '' })
+    }
     function close() {
       dropdown.hidden = true
       trigger.setAttribute('aria-expanded', 'false')
+      resetFilter()
     }
     function open() {
       // закрыть другие открытые category-select в этом диалоге
       dialog.querySelectorAll('[data-category-select-dropdown]:not([hidden])').forEach(d => {
         if (d !== dropdown) d.hidden = true
       })
+      // Flip-up, если внизу не помещается ~240px (высота дропдауна)
+      const spaceBelow = window.innerHeight - trigger.getBoundingClientRect().bottom
+      dropdown.classList.toggle('flip-up', spaceBelow < 240)
       dropdown.hidden = false
       trigger.setAttribute('aria-expanded', 'true')
+      resetFilter()
     }
 
     trigger.addEventListener('click', e => {
@@ -290,6 +302,17 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
         close()
       })
     })
+
+    if (search) {
+      search.addEventListener('click', e => e.stopPropagation())
+      search.addEventListener('input', () => {
+        const q = search.value.toLowerCase().trim()
+        options.forEach(o => {
+          const label = (o.dataset.searchLabel || '').toLowerCase()
+          o.style.display = (!q || label.includes(q)) ? '' : 'none'
+        })
+      })
+    }
 
     // Закрытие по клику вне / Escape
     const onDocClick = e => { if (!cs.contains(e.target)) close() }
