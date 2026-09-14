@@ -1,5 +1,6 @@
 import express from 'express'
 import db from '../db.js'
+import { v4 as uuid } from 'uuid'
 import { createCrudRouter, TABLE_CONFIGS, bool, validateEnums } from './crud.js'
 import {
   CURRENT_BALANCE_EXPR,
@@ -29,6 +30,18 @@ const router = express.Router()
 
 function loadAccount(id) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
+}
+
+// Карты счёта (маски PAN). Для UI — массив объектов { id, panMask, label }.
+function loadCardsForAccount(accountId) {
+  return db.prepare(
+    'SELECT id, panMask, label FROM account_cards WHERE accountId = ? ORDER BY label, panMask'
+  ).all(accountId)
+}
+
+function withCards(account) {
+  if (!account || !account.id) return account
+  return { ...account, cards: loadCardsForAccount(account.id) }
 }
 
 /** Снимок состояния остатка: фиксированная часть + движение после фиксации. */
@@ -214,7 +227,7 @@ router.get('/', (req, res) => {
     const rows = db.prepare(
       `SELECT a.*, ${CURRENT_BALANCE_EXPR} AS currentBalance FROM accounts a ORDER BY a.${TABLE_CONFIGS.accounts.defaultOrder}`
     ).all()
-    res.json(rows)
+    res.json(rows.map(withCards))
   } catch (e) {
     res.status(500).json({ error: 'db_error', message: e.message })
   }
@@ -226,7 +239,7 @@ router.get('/:id', (req, res) => {
       `SELECT a.*, ${CURRENT_BALANCE_EXPR} AS currentBalance FROM accounts a WHERE a.id = ?`
     ).get(req.params.id)
     if (!row) return res.status(404).json({ error: 'not_found' })
-    res.json(row)
+    res.json(withCards(row))
   } catch (e) {
     res.status(500).json({ error: 'db_error', message: e.message })
   }
@@ -237,5 +250,61 @@ router.use((req, res, next) => {
   res.json = (body) => json(decorate(body))
   next()
 }, createCrudRouter('accounts'))
+
+// --- карты счёта (PAN-маски) ------------------------------------------------
+
+// Валидация маски: 6 цифр, ≥4 плюсов, 4 цифры. Полный PAN из 16 цифр без плюсов
+// отвергается — мы не храним полный номер карты.
+const PAN_MASK_RE = /^\d{6}\+{4,}\d{4}$/
+
+function badPanMask(res) {
+  return res.status(400).json({
+    error: 'invalid_pan_mask',
+    field: 'panMask',
+    message: 'Маска должна быть в формате 6 цифр + ≥4 плюсов + 4 цифры, например 220015++++++4795. Полный PAN не принимается.'
+  })
+}
+
+// Список карт счёта.
+router.get('/:id/cards', (req, res) => {
+  const account = loadAccount(req.params.id)
+  if (!account) return res.status(404).json({ error: 'not_found' })
+  res.json(loadCardsForAccount(req.params.id))
+})
+
+// Добавить карту.
+router.post('/:id/cards', (req, res) => {
+  const account = loadAccount(req.params.id)
+  if (!account) return res.status(404).json({ error: 'not_found' })
+
+  const body = req.body || {}
+  const panMask = String(body.panMask ?? '').trim()
+  if (!PAN_MASK_RE.test(panMask)) return badPanMask(res)
+  const label = body.label ? String(body.label).trim().slice(0, 64) : null
+
+  const id = body.id || uuid()
+  try {
+    db.prepare(
+      'INSERT INTO account_cards (id, accountId, panMask, label) VALUES (?, ?, ?, ?)'
+    ).run(id, req.params.id, panMask, label)
+  } catch (e) {
+    if (String(e.message).includes('UNIQUE')) {
+      return res.status(409).json({ error: 'duplicate_pan_mask', message: 'У этого счёта уже есть такая маска.' })
+    }
+    return res.status(400).json({ error: 'db_error', message: e.message })
+  }
+  res.status(201).json({ id, accountId: req.params.id, panMask, label })
+})
+
+// Удалить карту.
+router.delete('/:id/cards/:cardId', (req, res) => {
+  const account = loadAccount(req.params.id)
+  if (!account) return res.status(404).json({ error: 'not_found' })
+  const result = db.prepare(
+    'DELETE FROM account_cards WHERE id = ? AND accountId = ?'
+  ).run(req.params.cardId, req.params.id)
+  if (result.changes === 0) return res.status(404).json({ error: 'not_found' })
+  res.json({ ok: true, deleted: req.params.cardId })
+})
 
 export default router

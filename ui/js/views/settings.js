@@ -64,8 +64,10 @@ export async function render(root) {
               <td>${c.type === 'expense' ? 'Расход' : 'Доход'}</td>
               <td><span style="display:inline-block;width:20px;height:20px;border-radius:4px;background:${c.color};vertical-align:middle"></span> ${c.color || ''}</td>
               <td>
-                <button class="btn btn-sm" data-action="edit" data-id="${c.id}" title="Редактировать">✎</button>
-                <button class="btn btn-sm btn-danger" data-action="archive" data-id="${c.id}" title="Архивировать">⊘</button>
+                <div class="row-actions">
+                  <button class="btn btn-sm" data-action="edit" data-id="${c.id}" title="Редактировать">✎</button>
+                  <button class="btn btn-sm btn-danger" data-action="archive" data-id="${c.id}" title="Архивировать">⊘</button>
+                </div>
               </td>
             </tr>
           `).join('')

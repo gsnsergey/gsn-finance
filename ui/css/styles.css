@@ -31,7 +31,10 @@ html, body {
 .app {
   display: grid;
   grid-template-columns: 240px minmax(0, 1fr);
+  /* Гарантируем, что .app занимает всю высоту вьюпорта, даже если контент
+     короче — иначе .content не получит высоту для передачи детям. */
   min-height: 100vh;
+  height: 100vh;
 }
 
 /* === Sidebar === */
@@ -79,7 +82,7 @@ html, body {
 .nav-section { padding: 16px 12px 6px; font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
 
 /* === Content === */
-.content { display: flex; flex-direction: column; }
+.content { display: flex; flex-direction: column; min-height: 0; }
 .topbar {
   display: flex;
   align-items: center;
@@ -87,11 +90,22 @@ html, body {
   padding: 18px 32px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
 }
 .topbar h1 { font-size: 20px; margin: 0; font-weight: 600; }
 .topbar-meta { font-size: 13px; color: var(--muted); }
 
-.view { padding: 24px 32px; flex: 1; }
+/* .view должна быть флекс-колонкой с min-height: 0, чтобы высота
+   корректно передавалась детям (в т. ч. .table-wrap). Без min-height: 0
+   флекс-детям не разрешают сжиматься ниже их контента и overflow: auto
+   в .table-wrap не сработает. */
+.view {
+  padding: 24px 32px;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 
 /* === Cards === */
 .cards {
@@ -121,8 +135,12 @@ html, body {
   border-radius: var(--radius);
   overflow: auto;
   box-shadow: var(--shadow);
-  /* Скроллим только таблицу; страница неподвижна. */
-  max-height: calc(100vh - 220px);
+  /* Растягиваем таблицу на всю оставшуюся высоту .view. Скроллится
+     только сама таблица; страница (включая сайдбар и топбар) неподвижна.
+     min-height: 0 обязателен — без него флекс-детям не разрешают сжиматься
+     ниже их контента, и overflow: auto не сработает. */
+  flex: 1 1 auto;
+  min-height: 0;
 }
 .table {
   width: 100%;
@@ -142,7 +160,10 @@ html, body {
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
-  background: rgba(0,0,0,0.02);
+  /* Непрозрачный фон (был rgba(0,0,0,0.02) — сливался на тёмных строках).
+     Чуть темнее var(--surface), чтобы контраст с телом таблицы был заметным. */
+  background: #f0f2f7;
+  border-bottom: 1px solid var(--border);
   /* Шапка прилипает к верху при прокрутке таблицы */
   position: sticky;
   top: 0;
@@ -151,6 +172,17 @@ html, body {
 .table tr:last-child td { border-bottom: none; }
 .table tr:hover td { background: rgba(0,0,0,0.02); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Кнопки действий в строке таблицы (✎ / × / ⊘ и т. п.) — в одну линию,
+   прижаты к правому краю ячейки. Раньше лежали в одной <td> напрямую и
+   рендерились столбиком, что растягивало высоту строки. */
+.row-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  justify-content: flex-end;
+}
+.row-actions .btn-sm { line-height: 1; }
 
 /* === P/L (portfolio) и любые отрицательные суммы ===
    profit-pos — зелёный для прибыли (намеренно, не из скоупа).
@@ -615,8 +647,202 @@ html, body {
 .page-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-bottom: 16px;
 }
+
+/* === Filters bar (над таблицей) === */
+.filters-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.filters-bar .filter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+.filters-bar .filter > span {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.filters-bar select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  background: var(--surface);
+  color: var(--text);
+}
+.filters-bar select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+
+/* Контейнер .table-section оборачивает фильтры + таблицу, чтобы можно
+   было перерисовать только эту часть при изменении фильтра. */
+.table-section { display: contents; }
+
+/* === Toolbar (view-mode toggle слева + actions справа) === */
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.view-mode-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.view-mode-toggle .view-mode-btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.view-mode-toggle .view-mode-btn:hover { background: rgba(0,0,0,0.04); color: var(--text); }
+.view-mode-toggle .view-mode-btn.active {
+  background: var(--accent);
+  color: white;
+}
+.view-mode-toggle .view-mode-btn + .view-mode-btn { border-left: 1px solid var(--border); }
+
+/* === Account cards (PAN-маски) === */
+.cards-badge {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+.cards-badge:hover { text-decoration: underline; }
+.cards-list {
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-radius: 6px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cards-list-item .muted { color: var(--muted); }
+
+/* === Tree view (портфель деревом) === */
+.tree-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  box-shadow: var(--shadow);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 4px 0;
+}
+.tree-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0,0,0,0.02);
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+  font-size: 13px;
+  transition: background 0.1s;
+}
+.tree-group-header:hover { background: rgba(37,99,235,0.06); }
+.tree-group-header .tree-caret {
+  font-size: 10px;
+  color: var(--muted);
+  width: 12px;
+  flex-shrink: 0;
+}
+.tree-group-header .tree-group-label { flex-shrink: 0; }
+.tree-group-header .tree-group-metrics {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+  font-weight: 400;
+  font-size: 12px;
+}
+.tree-group-header .tree-group-metric .muted { color: var(--muted); margin-right: 4px; }
+.tree-group-children { padding-left: 20px; }
+.tree-leaf {
+  display: grid;
+  grid-template-columns: 80px minmax(0, 1fr) 80px 110px 110px;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 12px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.tree-leaf:last-child { border-bottom: none; }
+.tree-leaf-ticker { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; }
+.tree-leaf-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-leaf-qty { text-align: right; font-variant-numeric: tabular-nums; }
+.tree-leaf-value, .tree-leaf-profit { text-align: right; }
+
+/* === Mini-dashboard (агрегаты по группам, над таблицей) === */
+.dashboard-section { margin-bottom: 12px; }
+.dashboard-section-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.dashboard-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+.dashboard-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  box-shadow: var(--shadow);
+}
+.dashboard-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text);
+}
+.dashboard-metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 2px;
+}
+.dashboard-metric-label { color: var(--muted); }
+.dashboard-metric-value { font-variant-numeric: tabular-nums; font-weight: 500; }
 
 /* === Responsive === */
 @media (max-width: 768px) {

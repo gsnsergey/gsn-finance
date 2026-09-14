@@ -3,8 +3,7 @@ import { openModal } from '../ui/modal.js'
 import { categoryIconHTML } from '../data/categoryIcons.js'
 
 export async function render(root) {
-  const [tx, accounts, categories] = await Promise.all([
-    api.get('/api/transactions?limit=200'),
+  const [accounts, categories] = await Promise.all([
     api.get('/api/accounts'),
     api.get('/api/categories')
   ])
@@ -12,7 +11,7 @@ export async function render(root) {
   const accountName = id => accounts.find(a => a.id === id)?.name || '—'
   const categoryName = id => categories.find(c => c.id === id)?.name || ''
 
-  if (tx.length === 0 && accounts.length === 0) {
+  if (accounts.length === 0) {
     root.innerHTML = `<div class="empty">
       <div class="empty-title">Начните со счёта</div>
       Создайте хотя бы один счёт, чтобы добавлять операции.
@@ -22,76 +21,195 @@ export async function render(root) {
     return
   }
 
-  if (tx.length === 0) {
-    root.innerHTML = `
-      <div class="page-actions">
-        <button class="btn btn-primary" id="add-tx">+ Добавить операцию</button>
-      </div>
-      <div class="table-wrap"><div class="empty">
-        <div class="empty-title">Операций пока нет</div>
-        Нажми «+ Добавить операцию» или заполни через CLI:<br>
-        <code>fin agent add-transaction --account "Tinkoff Black" --type expense --amount 1500 --category "Продукты" --comment "Магнит"</code>
-      </div></div>`
-    document.getElementById('add-tx').addEventListener('click', () => openTransactionForm(root, accounts, categories, null))
-    return
+  // Состояние фильтров в замыкании. Каждое изменение → запрос к API + перерисовка таблицы.
+  const filters = { from: '', to: '', categoryId: '', type: '', accountId: '', q: '' }
+
+  // Строим query string для /api/transactions из текущих фильтров.
+  function buildQuery() {
+    const params = new URLSearchParams()
+    for (const [k, v] of Object.entries(filters)) {
+      if (v) params.set(k, v)
+    }
+    // backend принимает limit; по умолчанию 500 — для большинства фильтров хватит.
+    params.set('limit', '500')
+    return `?${params.toString()}`
   }
 
+  // Загружаем операции с учётом фильтров и рендерим таблицу.
+  async function loadAndRenderTable() {
+    let tx
+    try {
+      tx = await api.get(`/api/transactions${buildQuery()}`)
+    } catch (e) {
+      toast('Не удалось загрузить операции: ' + e.message, 'error')
+      return
+    }
+
+    const tableSection = root.querySelector('.table-section') || (() => {
+      const div = document.createElement('div')
+      div.className = 'table-section'
+      root.appendChild(div)
+      return div
+    })()
+
+    // Любой фильтр активен? — покажем empty-state с подсказкой сбросить,
+    // даже если backend вернул 0 записей.
+    const anyFilterActive = Object.values(filters).some(v => v)
+    const emptyHtml = anyFilterActive
+      ? `<div class="empty">
+          <div class="empty-title">Нет операций по фильтру</div>
+          Попробуйте сбросить фильтры или изменить условия.
+          <div style="margin-top:12px"><button class="btn btn-sm" id="empty-reset">Сбросить фильтры</button></div>
+        </div>`
+      : `<div class="empty">
+          <div class="empty-title">Операций пока нет</div>
+          Нажми «+ Добавить операцию» или заполни через CLI:<br>
+          <code>fin agent add-transaction --account "Tinkoff Black" --type expense --amount 1500 --category "Продукты" --comment "Магнит"</code>
+        </div>`
+
+    const tableHtml = tx.length === 0 ? emptyHtml : `
+      <div class="table-wrap">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Счёт</th>
+              <th>Категория</th>
+              <th>Тип</th>
+              <th class="num">Сумма</th>
+              <th>Комментарий</th>
+              <th style="width:80px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tx.map(t => `
+              <tr data-id="${t.id}">
+                <td>${t.date}</td>
+                <td>${accountName(t.accountId)}</td>
+                <td>${categoryName(t.categoryId)}</td>
+                <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
+                <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
+                <td>${t.comment || ''}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="btn btn-sm" data-action="edit" data-id="${t.id}" title="Редактировать">✎</button>
+                    <button class="btn btn-sm btn-danger" data-action="delete" data-id="${t.id}" title="Удалить">×</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`
+
+    tableSection.innerHTML = tableHtml
+
+    // Обработчики edit/delete — после каждой перерисовки таблицы.
+    tableSection.querySelectorAll('[data-action="edit"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const txItem = tx.find(t => t.id === btn.dataset.id)
+        if (txItem) openTransactionForm(root, accounts, categories, txItem)
+      })
+    })
+
+    tableSection.querySelectorAll('[data-action="delete"]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('Удалить операцию?')) return
+        try {
+          await api.del(`/api/transactions/${btn.dataset.id}`)
+          toast('Удалено', 'success')
+          loadAndRenderTable()
+        } catch (e) { toast(e.message, 'error') }
+      })
+    })
+
+    const emptyReset = tableSection.querySelector('#empty-reset')
+    if (emptyReset) {
+      emptyReset.addEventListener('click', () => {
+        for (const k of Object.keys(filters)) filters[k] = ''
+        // Подменить значения в полях фильтр-бара
+        root.querySelectorAll('[data-filter]').forEach(el => {
+          const key = el.dataset.filter
+          if (el.tagName === 'INPUT') el.value = ''
+          else if (el.tagName === 'SELECT') el.value = ''
+        })
+        // Спрятать саму кнопку «Сбросить фильтры» в баре, если она была
+        const barReset = root.querySelector('#filters-bar-reset')
+        if (barReset) barReset.style.display = 'none'
+        loadAndRenderTable()
+      })
+    }
+  }
+
+  // Бар фильтров — рендерится один раз, обработчики обновляют состояние и дёргают перезагрузку.
   root.innerHTML = `
     <div class="page-actions">
       <button class="btn btn-primary" id="add-tx">+ Добавить операцию</button>
     </div>
-    <div class="table-wrap">
-      <table class="table">
-        <thead>
-          <tr>
-            <th>Дата</th>
-            <th>Счёт</th>
-            <th>Категория</th>
-            <th>Тип</th>
-            <th class="num">Сумма</th>
-            <th>Комментарий</th>
-            <th style="width:80px"></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${tx.map(t => `
-            <tr data-id="${t.id}">
-              <td>${t.date}</td>
-              <td>${accountName(t.accountId)}</td>
-              <td>${categoryName(t.categoryId)}</td>
-              <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-              <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
-              <td>${t.comment || ''}</td>
-              <td>
-                <button class="btn btn-sm" data-action="edit" data-id="${t.id}" title="Редактировать">✎</button>
-                <button class="btn btn-sm btn-danger" data-action="delete" data-id="${t.id}" title="Удалить">×</button>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
+    <div class="filters-bar">
+      <label class="filter"><span>Дата от</span><input type="date" data-filter="from" value="${escapeHtml(filters.from)}"></label>
+      <label class="filter"><span>Дата до</span><input type="date" data-filter="to" value="${escapeHtml(filters.to)}"></label>
+      <label class="filter"><span>Счёт</span>
+        <select data-filter="accountId">
+          <option value="">Все</option>
+          ${accounts.map(a => `<option value="${escapeHtml(a.id)}"${filters.accountId === a.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="filter"><span>Категория</span>
+        <select data-filter="categoryId">
+          <option value="">Все</option>
+          ${categories.map(c => `<option value="${escapeHtml(c.id)}"${filters.categoryId === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </label>
+      <label class="filter"><span>Тип</span>
+        <select data-filter="type">
+          <option value="">Все</option>
+          <option value="expense"${filters.type === 'expense' ? ' selected' : ''}>Расход</option>
+          <option value="income"${filters.type === 'income' ? ' selected' : ''}>Доход</option>
+          <option value="transfer"${filters.type === 'transfer' ? ' selected' : ''}>Перемещение</option>
+        </select>
+      </label>
+      <label class="filter"><span>Поиск</span><input type="text" data-filter="q" placeholder="комментарий…" value="${escapeHtml(filters.q)}"></label>
+      <button class="btn btn-sm" id="filters-bar-reset"${Object.values(filters).some(v => v) ? '' : ' style="display:none"'}>Сбросить</button>
     </div>
   `
-
   document.getElementById('add-tx').addEventListener('click', () => openTransactionForm(root, accounts, categories, null))
 
-  root.querySelectorAll('[data-action="edit"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const txItem = tx.find(t => t.id === btn.dataset.id)
-      if (txItem) openTransactionForm(root, accounts, categories, txItem)
+  // Навешиваем обработчики на фильтры
+  const debouncedQ = debounce(() => loadAndRenderTable(), 300)
+  root.querySelectorAll('[data-filter]').forEach(el => {
+    const key = el.dataset.filter
+    const event = el.tagName === 'INPUT' && el.type === 'text' ? 'input' : 'change'
+    el.addEventListener(event, () => {
+      filters[key] = el.value
+      // Показать/спрятать кнопку сброса
+      const barReset = root.querySelector('#filters-bar-reset')
+      if (barReset) barReset.style.display = Object.values(filters).some(v => v) ? '' : 'none'
+      if (key === 'q') debouncedQ()
+      else loadAndRenderTable()
     })
   })
 
-  root.querySelectorAll('[data-action="delete"]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      if (!confirm('Удалить операцию?')) return
-      try {
-        await api.del(`/api/transactions/${btn.dataset.id}`)
-        toast('Удалено', 'success')
-        render(root)
-      } catch (e) { toast(e.message, 'error') }
+  const barReset = root.querySelector('#filters-bar-reset')
+  if (barReset) {
+    barReset.addEventListener('click', () => {
+      for (const k of Object.keys(filters)) filters[k] = ''
+      root.querySelectorAll('[data-filter]').forEach(el => { el.value = '' })
+      barReset.style.display = 'none'
+      loadAndRenderTable()
     })
-  })
+  }
+
+  await loadAndRenderTable()
+}
+
+// Не заваливать бэкенд на каждом нажатии клавиши в поиске.
+function debounce(fn, ms) {
+  let t
+  return (...args) => {
+    clearTimeout(t)
+    t = setTimeout(() => fn(...args), ms)
+  }
 }
 
 function openTransactionForm(root, accounts, categories, tx) {
