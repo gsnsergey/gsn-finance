@@ -150,7 +150,7 @@ html, body {
 }
 .table tr:last-child td { border-bottom: none; }
 .table tr:hover td { background: rgba(0,0,0,0.02); }
-.table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* === P/L (portfolio) === */
 .profit-pos { color: #1a8754; font-variant-numeric: tabular-nums; }

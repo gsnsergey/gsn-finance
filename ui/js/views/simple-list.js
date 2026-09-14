@@ -50,22 +50,25 @@ const pctRender = v => {
 
 // Рендеры с символом валюты (для портфеля): принимают (value, row),
 // в row.currency — ISO-код валюты. Подпись currencySign(code) → '₽', '$', …
+// NB: между числом и знаком — неразрывный пробел (U+00A0), чтобы «91,10 ₽»
+// не разрывалось между строк при узкой колонке.
+const NBSP = ' '
 const num4Cur = (v, r) => {
   if (v == null) return '—'
   const n = Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
-  return `${n} ${currencySign(r?.currency)}`
+  return `${n}${NBSP}${currencySign(r?.currency)}`
 }
 const num2Cur = (v, r) => {
   if (v == null) return '—'
   const n = Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  return `${n} ${currencySign(r?.currency)}`
+  return `${n}${NBSP}${currencySign(r?.currency)}`
 }
 const profitCur = (v, r) => {
   if (v == null) return '—'
   const n = Number(v)
   const sign = n > 0 ? '+' : (n < 0 ? '−' : '')
   const cls = n > 0 ? 'profit-pos' : (n < 0 ? 'profit-neg' : '')
-  return `<span class="${cls}">${sign}${Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySign(r?.currency)}</span>`
+  return `<span class="${cls}">${sign}${Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${NBSP}${currencySign(r?.currency)}</span>`
 }
 
 const CONFIGS = {
@@ -115,8 +118,7 @@ const CONFIGS = {
       { key: 'currentPrice', label: 'Текущая', render: num4Cur, num: true },
       { key: 'currentValue', label: 'Стоимость', render: num2Cur, num: true },
       { key: 'profit', label: 'Прибыль', render: profitCur, num: true },
-      { key: 'profitPct', label: '%', render: pctRender, num: true },
-      { key: 'currency', label: 'Валюта', render: currencyCode }
+      { key: 'profitPct', label: '%', render: pctRender, num: true }
     ],
     sumKey: 'currentValue',
     addFieldsAsync: async () => {
