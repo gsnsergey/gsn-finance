@@ -33,6 +33,12 @@ router.get('/summary/net-worth', (req, res) => {
       `SELECT COALESCE(SUM(${CURRENT_BALANCE_EXPR}), 0) as s FROM accounts a WHERE a.archived = 0`
     ).get().s
     const depositsTotal = db.prepare(`SELECT COALESCE(SUM(currentBalance), 0) as s FROM deposits WHERE closedAt IS NULL`).get().s
+    // Стоимость портфеля = cost basis (quantity × avgBuyPrice). Подключение биржевых
+    // котировок для переоценки по рынку — отдельная задача; пока используем цену покупки.
+    const holdingsTotalRub = db.prepare(
+      `SELECT COALESCE(SUM(quantity * avgBuyPrice), 0) AS s FROM holdings`
+    ).get().s
+    const holdingsTotal = Math.round(Number(holdingsTotalRub) * 100)
     const loansRemaining = db.prepare(`SELECT COALESCE(SUM(remainingAmount), 0) as s FROM loans`).get().s
     const subsMonthly = db.prepare(`
       SELECT COALESCE(SUM(
@@ -53,11 +59,12 @@ router.get('/summary/net-worth', (req, res) => {
       ), 0) as s FROM obligations
     `).get().s
 
-    const assets = (accountsTotal || 0) + (depositsTotal || 0)
+    const assets = (accountsTotal || 0) + (depositsTotal || 0) + holdingsTotal
     const liabilities = (loansRemaining || 0)
     res.json({
       accountsTotal,
       depositsTotal,
+      holdingsTotal,
       loansRemaining,
       subsMonthly,
       obligationsMonthly,
