@@ -25,6 +25,10 @@ export async function render(root) {
 
   const nwClass = nw.netWorth >= 0 ? 'success' : 'danger'
 
+  // Обязательства всего = остаток по кредитам + годовая сумма активных подписок
+  // (подписки с периодом monthly/yearly/weekly уже приведены к месячному значению).
+  const obligationsTotal = (nw.loansRemaining || 0) + Math.round((subsMonthly || 0) * 12)
+
   root.innerHTML = `
     <div class="cards">
       <div class="card ${nwClass}">
@@ -46,6 +50,11 @@ export async function render(root) {
         <div class="card-label">Кредиты (остаток)</div>
         <div class="card-value">${rub(nw.loansRemaining)}</div>
         <div class="card-sub">Сколько должны</div>
+      </div>
+      <div class="card danger">
+        <div class="card-label">Обязательства всего</div>
+        <div class="card-value">${rub(obligationsTotal)}</div>
+        <div class="card-sub">Кредиты + годовая сумма подписок</div>
       </div>
     </div>
 
