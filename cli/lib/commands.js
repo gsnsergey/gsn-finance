@@ -5,12 +5,19 @@ export const commands = {}
 
 // ===== ACCOUNTS =====
 
+// Реальный остаток: balance — снимок на дату сверки, currentBalance — с учётом
+// операций после неё (считает бэкенд).
+function realBalance(a) {
+  return a.currentBalance !== undefined && a.currentBalance !== null ? a.currentBalance : a.balance
+}
+
 commands['list-accounts'] = async () => {
   const rows = await listAccounts()
   if (rows.length === 0) { console.log('No accounts yet.'); return }
   console.log('Accounts:')
   for (const a of rows) {
-    console.log(`  ${a.name.padEnd(28)} ${a.bank || '-'.padEnd(10)} ${kopToRub(a.balance)}`)
+    const note = a.balanceAsOf ? `сверен ${a.balanceAsOf}` : 'без сверки'
+    console.log(`  ${a.name.padEnd(28)} ${(a.bank || '-').padEnd(10)} ${kopToRub(realBalance(a))}  (${note})`)
   }
 }
 
@@ -24,7 +31,38 @@ commands['add-account'] = async (f) => {
     color: f.color
   }
   const created = await api.post('/api/accounts', body)
-  ok(`account "${created.name}" created (${kopToRub(created.balance)})`)
+  ok(`account "${created.name}" created (${kopToRub(realBalance(created))})`)
+}
+
+// Сверка: сообщаем фактический (банковский) остаток на дату — он фиксируется,
+// операции после этой даты считаются сверх него.
+commands['reconcile-account'] = async (f) => {
+  const account = await resolveAccount(requireFlag(f, 'account'))
+  const body = { actualBalance: rubToKop(requireFlag(f, 'balance')) }
+  if (f['as-of'] !== undefined) body.asOf = f['as-of']
+
+  const res = await api.post(`/api/accounts/${account.id}/reconcile`, body)
+  ok(`счёт «${account.name}» сверен на ${res.after.balanceAsOf}: ${kopToRub(res.after.currentBalance)}`)
+  console.log(`  зафиксированный остаток: ${kopToRub(res.before.balance)} → ${kopToRub(res.after.balance)}`)
+  console.log(`  расхождение до сверки:   ${res.delta === 0 ? 'нет' : kopToRub(res.delta)}`)
+}
+
+// Правка счёта: --balance = новая сверка на сегодня,
+// --as-of = сдвиг даты фиксации (реальный остаток сохраняется), --clear-as-of = снять фиксацию.
+commands['update-account'] = async (f) => {
+  const account = await resolveAccount(requireFlag(f, 'account'))
+  const body = {}
+  if (f.balance !== undefined) body.balance = rubToKop(f.balance)
+  if (f.bool['clear-as-of']) body.balanceAsOf = null
+  else if (f['as-of'] !== undefined) body.balanceAsOf = f['as-of']
+
+  if (Object.keys(body).length === 0) {
+    throw new Error('нужен хотя бы один флаг: --balance, --as-of или --clear-as-of')
+  }
+
+  const updated = await api.patch(`/api/accounts/${account.id}`, body)
+  const note = updated.balanceAsOf ? `сверен ${updated.balanceAsOf}` : 'без сверки'
+  ok(`счёт «${updated.name}»: остаток на дату сверки ${kopToRub(updated.balance)} (${note}), реальный ${kopToRub(realBalance(updated))}`)
 }
 
 // ===== TRANSACTIONS =====
@@ -224,7 +262,9 @@ commands['t-invest'] = async (f) => {
     console.log(line)
     if (a.positions && a.positions.length > 0) {
       for (const p of a.positions) {
-        console.log(`      ${p.action === 'created' ? '+' : '~'} ${String(p.ticker).padEnd(10)} qty=${p.qty}`)
+        const mark = p.action === 'created' ? '+' : (p.action === 'would-create' ? '?' : '~')
+        const price = p.price ? ` @ ${p.price}` : ''
+        console.log(`      ${mark} ${String(p.ticker).padEnd(10)} qty=${String(p.qty).padEnd(10)}${price}`)
       }
     }
   }

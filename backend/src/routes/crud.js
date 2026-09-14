@@ -5,7 +5,7 @@ import db from '../db.js'
 export const TABLE_CONFIGS = {
   accounts: {
     table: 'accounts',
-    fields: ['name', 'bank', 'type', 'currency', 'balance', 'color', 'archived'],
+    fields: ['name', 'bank', 'type', 'currency', 'balance', 'balanceAsOf', 'color', 'archived'],
     required: ['name', 'type'],
     enums: { type: ['debit', 'credit', 'card', 'savings'] },
     booleanFields: ['archived'],
@@ -29,9 +29,10 @@ export const TABLE_CONFIGS = {
   },
   holdings: {
     table: 'holdings',
-    fields: ['broker', 'type', 'ticker', 'name', 'quantity', 'avgPrice', 'currency', 'account', 'accountId'],
-    required: ['broker', 'ticker', 'quantity', 'avgPrice'],
+    fields: ['broker', 'type', 'ticker', 'name', 'quantity', 'avgBuyPrice', 'currentPrice', 'totalCost', 'currentValue', 'profit', 'profitPct', 'currency', 'account', 'accountId', 'blocked'],
+    required: ['broker', 'ticker', 'quantity', 'avgBuyPrice', 'currentPrice'],
     enums: { type: ['stock', 'etf', 'fund', 'bond_ofz', 'bond_corp', 'eurobond', 'future', 'option', 'metal', 'crypto', 'other'] },
+    booleanFields: ['blocked'],
     defaultOrder: 'broker ASC, account ASC, ticker ASC'
   },
   loans: {
@@ -58,7 +59,7 @@ export const TABLE_CONFIGS = {
   }
 }
 
-function bool(v) {
+export function bool(v) {
   if (v === true || v === 1 || v === '1' || v === 'true') return 1
   if (v === false || v === 0 || v === '0' || v === 'false' || v === null || v === undefined) return 0
   return v ? 1 : 0
@@ -74,7 +75,7 @@ function validateRequired(body, required) {
   return null
 }
 
-function validateEnums(body, enums) {
+export function validateEnums(body, enums) {
   for (const [field, allowed] of Object.entries(enums)) {
     if (body[field] !== undefined && body[field] !== null && !allowed.includes(body[field])) {
       return { field, allowed }
