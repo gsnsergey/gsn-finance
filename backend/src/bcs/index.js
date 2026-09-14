@@ -1,16 +1,21 @@
 // Клиент БКС Торгового API.
 //
-// Документация: https://trade-api.bcs.ru/
-// - Авторизация: POST https://be.broker.ru/trade-api-keycloak/realms/tradeapi/protocol/openid-connect/token
+// Документация: https://trade-api.bcs.ru/  (PDF: https://cdn.bcs.ru/static/bcs/files/trade-api-docs.pdf)
+//
+// Эндпоинты (по сервисам, у каждого свой под-путь):
+// - Авторизация (Keycloak): POST https://be.broker.ru/trade-api-keycloak/realms/tradeapi/protocol/openid-connect/token
 //   form-encoded: client_id=trade-api-read, grant_type=refresh_token, refresh_token=<token>
-// - Портфель:    GET https://be.broker.ru/trade-api-bff-operations/api/v1/portfolio?brokerAccountId=<id>
-// - Лимиты:      GET https://be.broker.ru/trade-api-bff-operations/api/v1/limits?brokerAccountId=<id>
+// - Портфель:   GET https://be.broker.ru/trade-api-bff-portfolio/api/v1/portfolio (без query — счёт берётся из токена)
+// - Лимиты:     GET https://be.broker.ru/trade-api-bff-limit/api/v1/limits
+// - Счета:      GET https://be.broker.ru/trade-api-bff-operations/api/v1/accounts
+// - Заявки:     POST https://be.broker.ru/trade-api-bff-operations/api/v1/orders
 //
 // Аутентификация:
 //   refresh_token → access_token (TTL 24 часа). Каждый refresh-token
 //   привязан к ОДНОМУ брокерскому счёту. Поэтому brokerAccountId в нашей
 //   таблице broker_credentials — это идентификатор счёта, для которого
-//   выпущен токен.
+//   выпущен токен (нужен для UI и для будущей фильтрации портфеля, но
+//   сам /portfolio его не принимает — счёт определяется токеном).
 //
 // ВАЖНО — про схему ответа:
 //   Эта реализация делает минимальный маппинг ответа БКС → наши holdings.
@@ -24,8 +29,19 @@
 
 import db from '../db.js'
 
-const KEYCLOAK_URL = 'https://be.broker.ru/trade-api-keycloak/realms/tradeapi/protocol/openid-connect/token'
-const BFF_BASE = 'https://be.broker.ru/trade-api-bff-operations/api/v1'
+// Базовые URL-ы сервисов БКС (по Go-SDK https://pkg.go.dev/github.com/diekinari/bcs-trade-go).
+// У БКС у каждого сервиса свой путь-префикс на одном хосте be.broker.ru.
+const BCS_PORTS = {
+  auth:      'https://be.broker.ru/trade-api-keycloak/realms/tradeapi/protocol/openid-connect/token',
+  portfolio: 'https://be.broker.ru/trade-api-bff-portfolio/api/v1',
+  limits:    'https://be.broker.ru/trade-api-bff-limit/api/v1',
+  operations:'https://be.broker.ru/trade-api-bff-operations/api/v1',
+  marketData:'https://be.broker.ru/trade-api-market-data-connector/api/v1'
+}
+
+const KEYCLOAK_URL = BCS_PORTS.auth
+// BFF_BASE оставлен для обратной совместимости, но /portfolio использует свой BCS_PORTS.portfolio
+const BFF_BASE = BCS_PORTS.operations
 
 // in-memory cache: key = `bcs:${brokerAccountId}` → { accessToken, expiresAt }
 const accessTokenCache = new Map()
@@ -57,13 +73,17 @@ export async function authenticate(refreshToken) {
  * Получить портфель по brokerAccountId.
  * Автоматически обменивает refresh_token на access_token (с кешем на 24h).
  *
+ * Эндпоинт `/trade-api-bff-portfolio/api/v1/portfolio` НЕ принимает
+ * brokerAccountId query — счёт определяется токеном. brokerAccountId
+ * нужен только для маршрутизации кеша access_token (один токен → один счёт).
+ *
  * @param {string} refreshToken
  * @param {string} brokerAccountId
  * @returns {Promise<any>} сырой ответ БКС (см. normalizePosition для маппинга)
  */
 export async function getPortfolio(refreshToken, brokerAccountId) {
   const accessToken = await getOrRefreshAccessToken(refreshToken, brokerAccountId)
-  const url = `${BFF_BASE}/portfolio?brokerAccountId=${encodeURIComponent(brokerAccountId)}`
+  const url = `${BCS_PORTS.portfolio}/portfolio`
   let res = await fetch(url, {
     headers: { 'Authorization': `Bearer ${accessToken}` }
   })
@@ -83,13 +103,12 @@ export async function getPortfolio(refreshToken, brokerAccountId) {
 /**
  * Нормализация позиции из ответа БКС к нашему формату holdings.
  *
- * Структура ответа БКС не публикуется как статичная OpenAPI-схема, поэтому
- * маппинг ниже сделан по аналогии с Тинькофф (broker/ticker/quantity/
- * currentValue/avgBuyPrice). При первом запуске против реального счёта
- * может потребоваться корректировка — см. тестовые ответы в Postman
- * (https://mybroker.postman.co/workspace/041e8fca-d294-4b29-b865-86430c4f5ca0).
+ * Структура ответа БКС (см. Go SDK https://pkg.go.dev/github.com/diekinari/bcs-trade-go):
+ *   { ticker, instrumentType, quantity, balancePrice, currentPrice,
+ *     currentValue, unrealizedPL, portfolioShare, ... }
+ * Поле balancePrice — это средняя цена покупки (наш avgBuyPrice).
  *
- * Принимает оба варианта: массив позиций напрямую или объект с полем positions.
+ * /portfolio возвращает JSON-массив позиций напрямую (не объект с .positions).
  * @returns {Array<{ticker, name, quantity, currentValue, currency, brokerAccountId}>}
  */
 export function normalizePosition(raw, brokerAccountId) {
@@ -104,12 +123,12 @@ export function normalizePosition(raw, brokerAccountId) {
     return {
       ticker: p.ticker || p.symbol || p.secId || '',
       name: p.name || p.shortName || p.secName || '',
+      type: p.instrumentType || 'stock',
       quantity: toNum(p.quantity ?? p.qty ?? p.balance ?? 0),
-      // currentValue: стоимость позиции сейчас (в валюте счёта).
-      // В БКС может быть поле "value" или "marketValue" или рассчитываться
-      // как price * quantity — при первом запуске проверьте по ответу.
+      // currentValue — стоимость позиции сейчас (в валюте счёта).
       currentValue: toNum(p.currentValue ?? p.marketValue ?? p.value ?? 0),
-      avgBuyPrice: toNum(p.avgPrice ?? p.averagePrice ?? p.avgBuyPrice ?? 0),
+      // balancePrice — средняя цена покупки (документация БКС SDK).
+      avgBuyPrice: toNum(p.balancePrice ?? p.avgPrice ?? p.averagePrice ?? 0),
       currency: p.currency || p.currencyCode || 'RUB',
       brokerAccountId
     }

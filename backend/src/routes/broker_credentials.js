@@ -194,6 +194,7 @@ router.post('/discover-bcs-accounts', async (req, res) => {
     const { authenticate } = await import('../bcs/index.js')
     const { access_token } = await authenticate(token)
     const acctsRes = await fetch('https://be.broker.ru/trade-api-bff-operations/api/v1/accounts', {
+      // /accounts живёт на сервисе operations (см. BCS_PORTS.operations в bcs/index.js)
       headers: { 'Authorization': `Bearer ${access_token}` }
     })
     if (!acctsRes.ok) {
