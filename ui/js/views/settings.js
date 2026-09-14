@@ -312,10 +312,16 @@ function openBrokerCredentialForm(root, existing, allCreds) {
         placeholder: 'ИИС, Основной брокерский…'
       },
       {
-        name: 'token', label: isEdit ? 'Новый токен (оставьте пустым, чтобы не менять)' : 'Токен',
+        name: 'token', label: isEdit ? 'Новый токен' : 'Токен',
         type: 'password', required: !isEdit,
         value: '',
-        placeholder: 'вставьте refresh_token из ЛК БКС или токен Т-Инвестиций',
+        // placeholder при редактировании показывает текущую маску — пользователь
+        // видит, что токен сохранён, а пустое поле = «не менять». Полный токен
+        // по-прежнему НЕ возвращается через API (только tokenMask), так что
+        // безопасность не страдает — показана ровно та же маска, что в списке.
+        placeholder: isEdit && existing?.tokenMask
+          ? `Оставьте пустым, чтобы не менять. Текущий: ${existing.tokenMask}`
+          : 'вставьте refresh_token из ЛК БКС или токен Т-Инвестиций',
         // autocomplete="new-password" отключает авто-заполнение password-менеджерами
         // (Chrome/Firefox/Safari любят подставлять сохранённый пароль от сайта и
         // обрезать длинные base64-токены до ~64 символов).
