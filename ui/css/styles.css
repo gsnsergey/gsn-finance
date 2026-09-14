@@ -42,6 +42,18 @@ html, body {
   background: var(--surface);
   border-right: 1px solid var(--border);
   padding: 16px 12px;
+  /* Плавное сворачивание при переключении состояния (.app.sidebar-hidden). */
+  overflow: hidden;
+  transition: width 0.2s ease;
+}
+/* Скрытая боковая панель: колонка грида 0, сайдбар не виден,
+   overflow скрыт, чтобы контент не вылезал при transition. */
+.app.sidebar-hidden { grid-template-columns: 0 minmax(0, 1fr); }
+.app.sidebar-hidden .sidebar {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right-color: transparent;
 }
 .brand {
   display: flex;
@@ -94,6 +106,26 @@ html, body {
 }
 .topbar h1 { font-size: 20px; margin: 0; font-weight: 600; }
 .topbar-meta { font-size: 13px; color: var(--muted); }
+
+/* Кнопка-гамбургер в топбаре: переключает видимость боковой панели.
+   Должна выглядеть как часть топбара (без рамки, как у бренда), но
+   подсвечиваться при наведении. */
+.sidebar-toggle {
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  margin-right: 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 16px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.sidebar-toggle:hover { background: rgba(0,0,0,0.04); color: var(--text); }
+.sidebar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Когда сайдбар скрыт — иконка-стрелка показывает «развернуть»,
+   когда виден — «свернуть». Это просто визуальный сигнал, не критично. */
+.app.sidebar-hidden .sidebar-toggle .fa-bars::before { content: "\f0c9"; } /* bars (по умолчанию) */
 
 /* .view должна быть флекс-колонкой с min-height: 0, чтобы высота
    корректно передавалась детям (в т. ч. .table-wrap). Без min-height: 0
