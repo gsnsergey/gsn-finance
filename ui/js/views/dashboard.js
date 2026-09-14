@@ -1,11 +1,12 @@
 import { api, rub } from '../api.js'
 
 export async function render(root) {
-  const [nw, subs, tx, accounts] = await Promise.all([
+  const [nw, subs, tx, accounts, today] = await Promise.all([
     api.get('/api/summary/net-worth'),
     api.get('/api/subscriptions'),
     api.get('/api/transactions?limit=5'),
-    api.get('/api/accounts')
+    api.get('/api/accounts'),
+    api.get('/api/summary/today')
   ])
 
   // Итог по счетам — по реальному остатку (balance + операции после даты сверки),
@@ -53,6 +54,19 @@ export async function render(root) {
         <div class="card-label">Подписки / мес</div>
         <div class="card-value">${rub(subsMonthly)}</div>
         <div class="card-sub">${subs.filter(s => s.active).length} активных</div>
+      </div>
+    </div>
+
+    <div class="cards">
+      <div class="card success">
+        <div class="card-label">Доход сегодня</div>
+        <div class="card-value">${rub(today.incomeToday)}</div>
+        <div class="card-sub">за ${today.date}</div>
+      </div>
+      <div class="card danger">
+        <div class="card-label">Расход сегодня</div>
+        <div class="card-value">${rub(today.expenseToday)}</div>
+        <div class="card-sub">за ${today.date}</div>
       </div>
     </div>
 
