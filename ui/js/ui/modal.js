@@ -112,7 +112,7 @@ function renderField(f) {
     const datalist = (f.suggestions && f.suggestions.length > 0)
       ? `<datalist id="dl-${id}">${f.suggestions.map(s => `<option value="${escapeAttr(s)}">`).join('')}</datalist>`
       : ''
-    input = `<input type="${htmlType}" name="${f.name}" id="${id}" ${inputmodeAttr} ${required} ${listAttr} placeholder="${escapeAttr(f.placeholder || '')}" value="${escapeAttr(value)}" ${f.step ? `step="${escapeAttr(f.step)}"` : ''} ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} autocomplete="off">${datalist}`
+    input = `<input type="${htmlType}" name="${f.name}" id="${id}" ${inputmodeAttr} ${required} ${listAttr} placeholder="${escapeAttr(f.placeholder || '')}" value="${escapeAttr(value)}" ${f.step ? `step="${escapeAttr(f.step)}"` : ''} ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} autocomplete="${escapeAttr(f.autocomplete || 'off')}" ${f.spellcheck ? `spellcheck="false"` : ''}>${datalist}`
   }
 
   return `<div class="form-field ${f.type === 'color' ? 'form-field-color' : ''}">

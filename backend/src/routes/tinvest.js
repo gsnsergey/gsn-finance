@@ -52,9 +52,28 @@ router.post('/', async (req, res) => {
   const dryRun = !!(req.body && req.body.dryRun)
   try {
     const summary = await pullAll(token, { dryRun })
+    // Успех — сбросить lastError и обновить lastUsedAt
+    try {
+      db.prepare(
+        "UPDATE broker_credentials SET lastUsedAt = ?, lastError = NULL, updatedAt = ? WHERE provider = 'tinkoff'"
+      ).run(new Date().toISOString(), new Date().toISOString())
+    } catch {}
     res.json({ ok: true, dryRun, tokenSource, summary })
   } catch (e) {
-    res.status(500).json({ error: 'tinvest_error', message: e.message })
+    // Записать lastError, чтобы пользователь видел причину в Настройках
+    try {
+      db.prepare(
+        "UPDATE broker_credentials SET lastError = ?, updatedAt = ? WHERE provider = 'tinkoff'"
+      ).run(e.message, new Date().toISOString())
+    } catch {}
+    res.status(500).json({
+      error: 'tinvest_error',
+      tokenSource,
+      message: e.message,
+      hint: tokenSource === 'db'
+        ? 'Если токен в БД неверный — удалите его в Настройки → Интеграции и оставьте TINKOFF_INVEST_TOKEN в data/.env.'
+        : 'Проверьте TINKOFF_INVEST_TOKEN в data/.env.'
+    })
   }
 })
 

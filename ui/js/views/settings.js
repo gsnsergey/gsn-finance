@@ -315,7 +315,12 @@ function openBrokerCredentialForm(root, existing, allCreds) {
         name: 'token', label: isEdit ? 'Новый токен (оставьте пустым, чтобы не менять)' : 'Токен',
         type: 'password', required: !isEdit,
         value: '',
-        placeholder: 'вставьте refresh_token из ЛК БКС или токен Т-Инвестиций'
+        placeholder: 'вставьте refresh_token из ЛК БКС или токен Т-Инвестиций',
+        // autocomplete="new-password" отключает авто-заполнение password-менеджерами
+        // (Chrome/Firefox/Safari любят подставлять сохранённый пароль от сайта и
+        // обрезать длинные base64-токены до ~64 символов).
+        autocomplete: 'new-password',
+        spellcheck: 'false'
       }
     ],
     onSubmit: async (data) => {
