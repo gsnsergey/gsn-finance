@@ -23,11 +23,14 @@ html, body {
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
+  /* Страница не должна скроллиться влево-вправо: горизонтальный скролл
+     допустим только внутри таблицы (.table-wrap). */
+  overflow-x: hidden;
 }
 
 .app {
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -124,11 +127,15 @@ html, body {
 .table {
   width: 100%;
   border-collapse: collapse;
+  /* Если контент шире контейнера — браузер сам покажет горизонтальный
+     скроллбар внутри .table-wrap. Не даём раздувать grid/flex треки. */
+  table-layout: auto;
 }
 .table th, .table td {
-  padding: 10px 14px;
+  padding: 8px 12px;
   text-align: left;
   border-bottom: 1px solid var(--border);
+  vertical-align: top;
 }
 .table th {
   font-size: 11px;
