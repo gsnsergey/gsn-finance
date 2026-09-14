@@ -60,7 +60,7 @@ export async function render(root) {
               <td>${accountName(t.accountId)}</td>
               <td>${categoryName(t.categoryId)}</td>
               <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-              <td class="num">${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
+              <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
               <td>${t.comment || ''}</td>
               <td>
                 <button class="btn btn-sm" data-action="edit" data-id="${t.id}" title="Редактировать">✎</button>

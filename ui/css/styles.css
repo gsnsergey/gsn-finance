@@ -248,6 +248,9 @@ html, body {
 }
 .badge-expense { background: rgba(220,38,38,0.1); color: var(--danger); }
 .badge-income { background: rgba(22,163,74,0.1); color: var(--success); }
+/* Сумма операций: расход красным, доход зелёным (для столбцов .num в таблицах). */
+.num.num-expense { color: var(--danger); }
+.num.num-income { color: var(--success); }
 
 /* === Toggle (сегментированный переключатель) === */
 .toggle-group {

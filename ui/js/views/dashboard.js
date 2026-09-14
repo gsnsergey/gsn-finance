@@ -82,7 +82,7 @@ export async function render(root) {
               <tr>
                 <td>${t.date}</td>
                 <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-                <td class="num">${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
+                <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
                 <td>${t.comment || ''}</td>
               </tr>
             `).join('')}
