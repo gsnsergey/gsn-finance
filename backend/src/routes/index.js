@@ -4,7 +4,7 @@ import { createCrudRouter, TABLE_CONFIGS } from './crud.js'
 import accountsRouter from './accounts.js'
 import transactionsRouter from './transactions.js'
 import tInvestRouter from './tinvest.js'
-import { CURRENT_BALANCE_EXPR } from '../balance.js'
+import { CURRENT_BALANCE_EXPR, todayIso } from '../balance.js'
 
 const router = express.Router()
 
@@ -66,6 +66,30 @@ router.get('/summary/net-worth', (req, res) => {
       netWorth: assets - liabilities,
       ts: new Date().toISOString()
     })
+  } catch (e) {
+    res.status(500).json({ error: 'db_error', message: e.message })
+  }
+})
+
+// Сводка за сегодня: доходы и расходы по локальной дате сервера.
+// Источник для карточек «Доход сегодня» / «Расход сегодня» в дашборде.
+// transfer не учитывается — это движение между своими счетами.
+router.get('/summary/today', (req, res) => {
+  try {
+    const date = todayIso()
+    const rows = db.prepare(
+      `SELECT type, COALESCE(SUM(amount), 0) AS s
+         FROM transactions
+        WHERE date = ? AND type IN ('income', 'expense')
+        GROUP BY type`
+    ).all(date)
+    let incomeToday = 0
+    let expenseToday = 0
+    for (const r of rows) {
+      if (r.type === 'income') incomeToday = r.s
+      else if (r.type === 'expense') expenseToday = r.s
+    }
+    res.json({ incomeToday, expenseToday, date, ts: new Date().toISOString() })
   } catch (e) {
     res.status(500).json({ error: 'db_error', message: e.message })
   }
