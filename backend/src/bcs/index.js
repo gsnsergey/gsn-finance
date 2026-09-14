@@ -101,38 +101,69 @@ export async function getPortfolio(refreshToken, brokerAccountId) {
 }
 
 /**
+ * Маппинг BCS `instrumentType` → наш `type` (см. миграцию 005_holdings_broker_fields.sql
+ * для полного enum: 'stock', 'etf', 'fund', 'bond_ofz', 'bond_corp', 'eurobond', и т.д.).
+ */
+function bcsInstrumentToOurType(instrumentType) {
+  switch (instrumentType) {
+    case 'STOCK':       return 'stock'
+    case 'ETF':         return 'etf'
+    case 'MUTUAL_FUNDS':return 'fund'
+    case 'BONDS':       return 'bond_corp'   // без разделения на OFZ/корп. в БКС API
+    case 'EURO_BONDS':  return 'eurobond'
+    case 'FUTURES':     return 'future'
+    case 'OPTIONS':     return 'option'
+    case 'METALS':      return 'metal'
+    default:            return 'other'
+  }
+}
+
+/**
  * Нормализация позиции из ответа БКС к нашему формату holdings.
  *
- * Структура ответа БКС (см. Go SDK https://pkg.go.dev/github.com/diekinari/bcs-trade-go):
- *   { ticker, instrumentType, quantity, balancePrice, currentPrice,
- *     currentValue, unrealizedPL, portfolioShare, ... }
- * Поле balancePrice — это средняя цена покупки (наш avgBuyPrice).
+ * /portfolio возвращает JSON-массив, где две «природы» записей:
+ *   - type='moneyLimit'  → денежный остаток по sub-account (RUB/USD/...) — это НЕ позиция,
+ *                           пропускаем (его место в `accounts.balance`, а не в `holdings`).
+ *   - type='depoLimit'   → ценные бумаги на депо-счёте — это то, что нам нужно.
  *
- * /portfolio возвращает JSON-массив позиций напрямую (не объект с .positions).
- * @returns {Array<{ticker, name, quantity, currentValue, currency, brokerAccountId}>}
+ * Тикер у облигаций/фондов в БКС приходит как ISIN (RU000...). Чтобы UI
+ * показывал привычные тикеры, нужна таблица ISIN → ticker; это отдельная задача.
+ *
+ * См. реальный ответ: type, subAccountId, agreementId, account, exchange,
+ *   ticker, displayName, baseAssetTicker, currency, upperType, instrumentType,
+ *   term, quantity, locked, balancePrice, currentPrice, balanceValue,
+ *   currentValue, unrealizedPL, ...
+ *
+ * @returns {Array<{ticker, name, type, quantity, avgBuyPrice, currentValue, currency, brokerAccountId}>}
  */
 export function normalizePosition(raw, brokerAccountId) {
   const arr = Array.isArray(raw) ? raw : Array.isArray(raw?.positions) ? raw.positions : []
-  return arr.map(p => {
-    // Числа в БКС приходят как строки с фиксированной точностью ("1234.56").
-    const toNum = v => {
-      if (typeof v === 'number') return v
-      if (typeof v === 'string') return parseFloat(v) || 0
-      return 0
-    }
-    return {
-      ticker: p.ticker || p.symbol || p.secId || '',
-      name: p.name || p.shortName || p.secName || '',
-      type: p.instrumentType || 'stock',
-      quantity: toNum(p.quantity ?? p.qty ?? p.balance ?? 0),
-      // currentValue — стоимость позиции сейчас (в валюте счёта).
-      currentValue: toNum(p.currentValue ?? p.marketValue ?? p.value ?? 0),
-      // balancePrice — средняя цена покупки (документация БКС SDK).
-      avgBuyPrice: toNum(p.balancePrice ?? p.avgPrice ?? p.averagePrice ?? 0),
-      currency: p.currency || p.currencyCode || 'RUB',
-      brokerAccountId
-    }
-  }).filter(p => p.ticker && p.quantity > 0)
+  return arr
+    .filter(p => {
+      // Skip cash positions — they belong to accounts.balance, not holdings.
+      // Без этого фильтра в портфеле появляются «акции RUB» с quantity=26751.96.
+      if (p.type === 'moneyLimit') return false
+      // Skip closed/zero positions
+      const q = typeof p.quantity === 'number' ? p.quantity : parseFloat(p.quantity) || 0
+      if (q <= 0) return false
+      return true
+    })
+    .map(p => {
+      const toNum = v => (typeof v === 'number' ? v : typeof v === 'string' ? parseFloat(v) || 0 : 0)
+      return {
+        ticker: p.ticker || p.symbol || p.secId || '',
+        name: p.displayName || p.shortName || p.name || p.secName || '',
+        type: bcsInstrumentToOurType(p.instrumentType),
+        quantity: toNum(p.quantity),
+        // balancePrice — средняя цена покупки (наш avgBuyPrice)
+        avgBuyPrice: toNum(p.balancePrice ?? p.avgPrice ?? p.averagePrice ?? 0),
+        // currentValue — стоимость позиции сейчас в валюте счёта
+        currentValue: toNum(p.currentValue ?? p.currentValueRub ?? p.marketValue ?? p.value ?? 0),
+        currency: p.currency || p.currencyCode || 'RUB',
+        brokerAccountId
+      }
+    })
+    .filter(p => p.ticker)
 }
 
 async function getOrRefreshAccessToken(refreshToken, brokerAccountId) {

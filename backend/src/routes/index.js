@@ -37,19 +37,22 @@ router.use('/broker-credentials', brokerCredentialsRouter)
 // Сводный эндпоинт для дашборда (используется UI и CLI)
 router.get('/summary/net-worth', (req, res) => {
   try {
+    // Все денежные поля в этом эндпоинте отдаются В КОПЕЙКАХ (integer).
+    // UI делит на 100 в `rub()` для отображения в рублях.
+    //
     // Сумма по счетам — по реальному балансу (balance + движение после даты фиксации),
     // та же формула, что и в /api/accounts (см. backend/src/balance.js).
     const accountsTotal = db.prepare(
       `SELECT COALESCE(SUM(${CURRENT_BALANCE_EXPR}), 0) as s FROM accounts a WHERE a.archived = 0`
     ).get().s
     const depositsTotal = db.prepare(`SELECT COALESCE(SUM(currentBalance), 0) as s FROM deposits WHERE closedAt IS NULL`).get().s
-    // Стоимость портфеля = SUM(currentValue) — поле, которое записывается при импорте
-    // из Т-Инвестиций (= quantity × currentPrice на момент pull). Близко к live-стоимости
-    // в Т-Банке, расхождение только на дрейф цены после последнего импорта.
-    const holdingsTotalRub = db.prepare(
+    // Стоимость портфеля = SUM(currentValue). currentValue УЖЕ в копейках
+    // (Tinkoff/BCS upsert: Math.round(rubles * 100)). Раньше здесь было
+    // Math.round(... * 100) — лишнее умножение, из-за чего holdingsTotal
+    // показывался в 100x больше реального (372k ₽ как 34 млн ₽).
+    const holdingsTotal = db.prepare(
       `SELECT COALESCE(SUM(currentValue), 0) AS s FROM holdings`
     ).get().s
-    const holdingsTotal = Math.round(Number(holdingsTotalRub) * 100)
     const loansRemaining = db.prepare(`SELECT COALESCE(SUM(remainingAmount), 0) as s FROM loans`).get().s
     const subsMonthly = db.prepare(`
       SELECT COALESCE(SUM(
@@ -70,7 +73,7 @@ router.get('/summary/net-worth', (req, res) => {
       ), 0) as s FROM obligations
     `).get().s
 
-    const assets = (accountsTotal || 0) + (depositsTotal || 0) + holdingsTotal
+    const assets = (Number(accountsTotal) || 0) + (Number(depositsTotal) || 0) + (Number(holdingsTotal) || 0)
     const liabilities = (loansRemaining || 0)
     res.json({
       accountsTotal,

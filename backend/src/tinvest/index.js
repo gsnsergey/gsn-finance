@@ -282,11 +282,15 @@ export async function fetchAccountPortfolio(api, account, { currency = 'RUB' } =
 }
 
 function upsertHolding(record) {
+  // Все денежные поля (avgBuyPrice/currentPrice/totalCost/currentValue/profit)
+  // upsert'ятся В КОПЕЙКАХ (× 100 от рублёвных значений из gRPC SDK).
+  // См. миграцию 009_holdings_tinkoff_kopecks.sql и normalize BCS.
   const existing = db.prepare(
     `SELECT id FROM holdings WHERE broker = ? AND ticker = ? AND account = ?`
   ).get(record.broker, record.ticker, record.account)
 
   const now = new Date().toISOString()
+  const kp = v => Math.round((v || 0) * 100)  // rubles → kopecks
 
   if (existing) {
     db.prepare(
@@ -294,8 +298,13 @@ function upsertHolding(record) {
        SET quantity = ?, avgBuyPrice = ?, currentPrice = ?, totalCost = ?, currentValue = ?, profit = ?, profitPct = ?, currency = ?, type = ?, name = ?, blocked = ?, updatedAt = ?
        WHERE id = ?`
     ).run(
-      record.quantity, record.avgBuyPrice, record.currentPrice,
-      record.totalCost, record.currentValue, record.profit, record.profitPct,
+      record.quantity,
+      kp(record.avgBuyPrice),
+      kp(record.currentPrice),
+      kp(record.totalCost),
+      kp(record.currentValue),
+      kp(record.profit),
+      record.profitPct,
       record.currency, record.type, record.name, record.blocked, now,
       existing.id
     )
@@ -308,8 +317,13 @@ function upsertHolding(record) {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, record.broker, record.type, record.ticker, record.name,
-    record.quantity, record.avgBuyPrice, record.currentPrice,
-    record.totalCost, record.currentValue, record.profit, record.profitPct,
+    record.quantity,
+    kp(record.avgBuyPrice),
+    kp(record.currentPrice),
+    kp(record.totalCost),
+    kp(record.currentValue),
+    kp(record.profit),
+    record.profitPct,
     record.currency, record.account, record.blocked,
     now, now
   )
