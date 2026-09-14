@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+# Управление фоновым сервером Finans.
+# Использование: ./bin/ctl {start|stop|restart|status|logs|help}
+# Или через npm: npm run serve:start, npm run serve:stop, ...
+
+set -e
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PID_FILE="$ROOT/data/server.pid"
+LOG_FILE="$ROOT/data/server.log"
+PORT="${FINANS_PORT:-3737}"
+
+cd "$ROOT"
+
+is_running() {
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null)"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$PID_FILE"
+  fi
+  return 1
+}
+
+ensure_deps() {
+  if [ ! -d "node_modules/express" ] || [ ! -d "node_modules/better-sqlite3" ]; then
+    echo "→ Установка зависимостей (первый запуск)..."
+    npm install --workspaces --include-workspace-root --no-audit --no-fund >/dev/null
+  fi
+}
+
+ensure_db() {
+  if [ ! -f "data/finans.db" ]; then
+    echo "→ Миграция БД..."
+    npm run migrate >/dev/null
+    echo "→ Сидинг категорий..."
+    node backend/src/seed.js >/dev/null
+  fi
+}
+
+cmd_start() {
+  if is_running; then
+    echo "✗ Уже запущен (PID $(cat "$PID_FILE"))"
+    echo "  ./bin/ctl status    — проверить"
+    echo "  ./bin/ctl logs      — посмотреть лог"
+    exit 1
+  fi
+
+  if lsof -i ":$PORT" >/dev/null 2>&1; then
+    echo "✗ Порт $PORT занят другим процессом:"
+    lsof -i ":$PORT"
+    echo "  Останови его или задай FINANS_PORT=3738 ./bin/ctl start"
+    exit 1
+  fi
+
+  ensure_deps
+  ensure_db
+
+  echo "→ Запуск сервера..."
+  : > "$LOG_FILE"
+  PORT="$PORT" nohup node backend/src/server.js >> "$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  disown || true
+
+  sleep 1
+  if is_running; then
+    local pid
+    pid="$(cat "$PID_FILE")"
+    echo "✓ Запущен (PID $pid)"
+    echo ""
+    echo "  UI:        http://localhost:$PORT"
+    echo "  API:       http://localhost:$PORT/api/health"
+    echo "  Лог:       $LOG_FILE"
+    echo "  PID-файл:  $PID_FILE"
+    echo ""
+    echo "  Команды:   ./bin/ctl stop | status | logs | restart"
+  else
+    echo "✗ Не удалось запустить. Последние строки лога:"
+    tail -20 "$LOG_FILE" || true
+    exit 1
+  fi
+}
+
+cmd_stop() {
+  if ! is_running; then
+    echo "○ Не запущен"
+    rm -f "$PID_FILE"
+    return 0
+  fi
+  local pid
+  pid="$(cat "$PID_FILE")"
+  echo "→ Останавливаю (PID $pid)..."
+  kill "$pid" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    sleep 1
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$PID_FILE"
+      echo "✓ Остановлен"
+      return 0
+    fi
+  done
+  echo "⚠ Не ответил за 5с — kill -9"
+  kill -9 "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "✓ Остановлен принудительно"
+}
+
+cmd_restart() {
+  cmd_stop || true
+  sleep 1
+  cmd_start
+}
+
+cmd_status() {
+  if is_running; then
+    local pid
+    pid="$(cat "$PID_FILE")"
+    echo "✓ Запущен (PID $pid, порт $PORT)"
+    local health
+    health="$(curl -s "http://localhost:$PORT/api/health" 2>/dev/null || true)"
+    if [ -n "$health" ]; then
+      echo "  Health: $health"
+    else
+      echo "  Health: не отвечает (см. logs)"
+    fi
+  else
+    echo "○ Не запущен"
+    echo "  Запустить: ./bin/ctl start"
+  fi
+}
+
+cmd_logs() {
+  if [ ! -f "$LOG_FILE" ]; then
+    echo "Лог-файл не существует: $LOG_FILE"
+    exit 1
+  fi
+  exec tail -f "$LOG_FILE"
+}
+
+cmd_help() {
+  cat <<EOF
+Finans — управление сервером.
+
+Команды:
+  start     запустить в фоне (миграция + seed при необходимости)
+  stop      остановить
+  restart   остановить и запустить
+  status    показать состояние и health
+  logs      tail -f лог сервера
+  help      эта справка
+
+Переменные окружения:
+  FINANS_PORT   порт (по умолчанию 3737)
+
+Алиасы через npm:
+  npm run serve:start
+  npm run serve:stop
+  npm run serve:restart
+  npm run serve:status
+  npm run serve:logs
+EOF
+}
+
+case "${1:-help}" in
+  start)   cmd_start ;;
+  stop)    cmd_stop ;;
+  restart) cmd_restart ;;
+  status)  cmd_status ;;
+  logs)    cmd_logs ;;
+  help|-h|--help) cmd_help ;;
+  *)
+    echo "Неизвестная команда: $1"
+    echo "Используй: ./bin/ctl {start|stop|restart|status|logs|help}"
+    exit 1
+    ;;
+esac

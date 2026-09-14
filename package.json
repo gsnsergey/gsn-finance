@@ -1,0 +1,25 @@
+{
+  "name": "finans",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Личный финансовый менеджер: карты, вклады, акции, кредиты, подписки, обязательства. Ввод данных через CLI-агента.",
+  "workspaces": [
+    "backend",
+    "cli"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces --include-workspace-root",
+    "migrate": "npm run migrate --workspace backend",
+    "seed": "node backend/src/seed.js",
+    "dev": "npm run dev --workspace backend",
+    "cli": "node cli/bin/fin.js",
+    "serve:start": "bin/ctl start",
+    "serve:stop": "bin/ctl stop",
+    "serve:restart": "bin/ctl restart",
+    "serve:status": "bin/ctl status",
+    "serve:logs": "bin/ctl logs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

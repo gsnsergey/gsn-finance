@@ -1,0 +1,12 @@
+{
+  "name": "@finans/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "fin": "./bin/fin.js"
+  },
+  "scripts": {
+    "start": "node bin/fin.js"
+  }
+}
