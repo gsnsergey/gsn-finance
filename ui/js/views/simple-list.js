@@ -110,7 +110,10 @@ const CONFIGS = {
     addTitle: 'Новая позиция',
     columns: [
       { key: 'broker', label: 'Брокер', render: brokerLabel },
-      { key: 'account', label: 'Счёт/Пакет' },
+      // accountLabel — обогащение из broker_credentials (JOIN в API). Без него
+      // BCS-позиции показывают сырой brokerAccountId (число), а Тинькофф — читаемые
+      // имена из gRPC SDK. После обогащения колонка универсальна.
+      { key: 'account', label: 'Счёт/Пакет', render: (v, r) => r.accountLabel || v },
       { key: 'type', label: 'Тип', render: assetTypeLabel },
       { key: 'ticker', label: 'Тикер' },
       { key: 'name', label: 'Название' },
@@ -165,6 +168,9 @@ const CONFIGS = {
       {
         groupBy: 'account',
         title: 'По счетам/пакетам',
+        // Используем accountLabel из первой строки группы (одинаков для всех
+        // строк группы), иначе — сырой ключ.
+        labelRender: (rows) => rows[0]?.accountLabel || String(rows[0]?.account ?? '—'),
         metrics: (rows) => [
           { label: 'Позиций', value: String(rows.length) },
           { label: 'Стоимость', value: rub(rows.reduce((s, r) => s + (r.currentValue || 0), 0)) },
@@ -186,9 +192,12 @@ const CONFIGS = {
       levels: ['broker', 'account'],
       // Заголовок группы: (key, levelMeta) => { label, html?, hint? }
       // label — основной текст; hint — мелкий текст справа.
-      groupTitle: (key, level) => {
+      groupTitle: (key, level, node) => {
         if (level === 'broker') return { label: brokerLabel(key) }
-        return { label: key || '— Без счёта —' }
+        // На уровне счёта отдаём читаемый accountLabel (из broker_credentials),
+        // если он есть — иначе сырое значение ключа.
+        const label = node?.rows?.[0]?.accountLabel
+        return { label: label || key || '— Без счёта —' }
       },
       // Метрики группы (rows — позиции в этой ветке).
       groupMetrics: (rows) => [
@@ -519,7 +528,7 @@ export function makeListView(endpoint) {
       const path = treePath(node)
       // Свёрнутые хранятся в `treeCollapsed`. По умолчанию (нет в Set) — развёрнуто.
       const isOpen = !treeCollapsed.has(path)
-      const title = cfg.tree.groupTitle ? cfg.tree.groupTitle(node.key, node.level) : { label: node.key }
+      const title = cfg.tree.groupTitle ? cfg.tree.groupTitle(node.key, node.level, node) : { label: node.key }
       const metrics = cfg.tree.groupMetrics ? cfg.tree.groupMetrics(node.rows) : []
       return `
         <div class="tree-group" data-path="${escapeHtml(path)}">
@@ -546,8 +555,15 @@ export function makeListView(endpoint) {
           if (!groups.has(key)) groups.set(key, [])
           groups.get(key).push(r)
         }
-        const cards = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([key, rows]) => {
-          const titleRaw = section.valueRender ? section.valueRender(key) : key
+        const cards = [...groups.entries()].sort((a, b) => String(a[0]).localeCompare(String(b[0]))).map(([key, rows]) => {
+          // Приоритет заголовка карточки:
+          //   1) section.labelRender(rows) — для обогащённых полей (accountLabel),
+          //      где нет прямой функции key → label
+          //   2) section.valueRender(key) — для простых случаев (broker → label)
+          //   3) сырой key
+          let titleRaw = key
+          if (section.labelRender) titleRaw = section.labelRender(rows)
+          else if (section.valueRender) titleRaw = section.valueRender(key)
           return `<div class="dashboard-card">
             <div class="dashboard-card-title">${escapeHtml(String(titleRaw))}</div>
             ${section.metrics(rows).map(m => `

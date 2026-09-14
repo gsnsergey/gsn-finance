@@ -65,7 +65,7 @@ export function bool(v) {
   return v ? 1 : 0
 }
 
-function validateRequired(body, required) {
+export function validateRequired(body, required) {
   for (const f of required) {
     const v = body[f]
     if (v === undefined || v === null || v === '') {

@@ -1,6 +1,7 @@
 import express from 'express'
+import { v4 as uuid } from 'uuid'
 import db from '../db.js'
-import { createCrudRouter, TABLE_CONFIGS } from './crud.js'
+import { createCrudRouter, TABLE_CONFIGS, bool, validateRequired, validateEnums } from './crud.js'
 import accountsRouter from './accounts.js'
 import transactionsRouter from './transactions.js'
 import tInvestRouter from './tinvest.js'
@@ -17,7 +18,117 @@ router.use('/accounts', accountsRouter)
 // Все generic CRUD — один и тот же паттерн
 for (const name of Object.keys(TABLE_CONFIGS)) {
   if (name === 'accounts') continue
-  router.use(`/${name}`, createCrudRouter(name))
+  if (name === 'holdings') {
+    // holdings: обогащаем ответ accountLabel через JOIN на broker_credentials,
+    // чтобы UI мог показать читаемое имя («Копилка Ракета») вместо голого
+    // brokerAccountId (для BCS, где /portfolio возвращает только ID).
+    router.use('/holdings', createHoldingsRouter())
+  } else {
+    router.use(`/${name}`, createCrudRouter(name))
+  }
+}
+
+// CRUD для holdings с обогащением ответа списка.
+// То же, что createCrudRouter, но список и одиночная выборка добавляют поле
+// `accountLabel`, которое резолвится через broker_credentials по (provider, account).
+function createHoldingsRouter() {
+  const cfg = TABLE_CONFIGS.holdings
+  const { table, fields, required = [], enums = {}, booleanFields = [], defaultOrder } = cfg
+  const router = express.Router()
+
+  // Кеш по провайдеру: Map<brokerAccountId, label>. broker_credentials маленькая,
+  // но всё равно кешируем — чтобы на каждую позицию не дёргать SELECT.
+  const labelCache = new Map()
+  const labelsForProvider = provider => {
+    let m = labelCache.get(provider)
+    if (!m) {
+      m = new Map(db.prepare(
+        'SELECT brokerAccountId, label FROM broker_credentials WHERE provider = ?'
+      ).all(provider).map(c => [c.brokerAccountId, c.label]))
+      labelCache.set(provider, m)
+    }
+    return m
+  }
+  const enrich = row => {
+    if (!row) return row
+    const label = labelsForProvider(row.broker).get(row.account) || null
+    return { ...row, accountLabel: label }
+  }
+
+  // LIST
+  router.get('/', (req, res) => {
+    try {
+      const rows = db.prepare(
+        `SELECT * FROM ${table} ORDER BY ${defaultOrder}`
+      ).all()
+      res.json(rows.map(enrich))
+    } catch (e) { res.status(500).json({ error: 'db_error', message: e.message }) }
+  })
+
+  // READ one
+  router.get('/:id', (req, res) => {
+    try {
+      const row = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id)
+      if (!row) return res.status(404).json({ error: 'not_found' })
+      res.json(enrich(row))
+    } catch (e) { res.status(500).json({ error: 'db_error', message: e.message }) }
+  })
+
+  // CREATE
+  router.post('/', async (req, res) => {
+    const body = req.body || {}
+    const missing = validateRequired(body, required)
+    if (missing) return res.status(400).json({ error: 'missing_field', field: missing })
+    const invalid = validateEnums(body, enums)
+    if (invalid) return res.status(400).json({ error: 'invalid_enum', ...invalid })
+    const id = body.id || uuid()
+    const now = new Date().toISOString()
+    const data = { id }
+    for (const f of fields) {
+      if (body[f] !== undefined) data[f] = booleanFields.includes(f) ? bool(body[f]) : body[f]
+    }
+    data.createdAt = body.createdAt || now
+    data.updatedAt = now
+    const cols = Object.keys(data)
+    try {
+      db.prepare(`INSERT INTO ${table} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...Object.values(data))
+      const created = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(id)
+      res.status(201).json(enrich(created))
+    } catch (e) { res.status(400).json({ error: 'db_error', message: e.message }) }
+  })
+
+  // UPDATE
+  router.patch('/:id', (req, res) => {
+    const existing = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id)
+    if (!existing) return res.status(404).json({ error: 'not_found' })
+    const body = req.body || {}
+    const invalid = validateEnums(body, enums)
+    if (invalid) return res.status(400).json({ error: 'invalid_enum', ...invalid })
+    const patch = { updatedAt: new Date().toISOString() }
+    for (const f of fields) {
+      if (body[f] !== undefined) patch[f] = booleanFields.includes(f) ? bool(body[f]) : body[f]
+    }
+    const cols = Object.keys(patch)
+    if (cols.length === 1) return res.json(enrich(existing))
+    try {
+      db.prepare(
+        `UPDATE ${table} SET ${cols.map(c => `${c} = ?`).join(', ')} WHERE id = ?`
+      ).run(...Object.values(patch), req.params.id)
+      const updated = db.prepare(`SELECT * FROM ${table} WHERE id = ?`).get(req.params.id)
+      res.json(enrich(updated))
+    } catch (e) { res.status(400).json({ error: 'db_error', message: e.message }) }
+  })
+
+  // DELETE
+  router.delete('/:id', (req, res) => {
+    try {
+      const result = db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(req.params.id)
+      if (result.changes === 0) return res.status(404).json({ error: 'not_found' })
+      res.json({ ok: true, deleted: req.params.id })
+    } catch (e) { res.status(500).json({ error: 'db_error', message: e.message }) }
+  })
+
+  return router
 }
 
 // transactions — отдельный (фильтры + обновление баланса)
