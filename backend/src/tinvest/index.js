@@ -24,7 +24,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '../../..')
 const ENV_PATH = path.join(ROOT, 'data/.env')
 const CACHE_PATH = path.join(ROOT, 'data/instruments-cache.json')
-const BROKER = 't-invest'
+const BROKER = 'tinkoff'
 
 // Базовый маппинг Tinkoff instrumentType → наш enum holdings.type
 const TYPE_MAP = {
