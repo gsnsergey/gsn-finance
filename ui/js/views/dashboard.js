@@ -40,7 +40,7 @@ export async function render(root) {
       <div class="card">
         <div class="card-label">Портфель</div>
         <div class="card-value">${rub(nw.holdingsTotal)}</div>
-        <div class="card-sub">${(nw.holdingsTotal || 0) === 0 ? 'Нет позиций' : 'Стоимость (cost basis)'}</div>
+        <div class="card-sub">${(nw.holdingsTotal || 0) === 0 ? 'Нет позиций' : 'Стоимость (по последнему импорту)'}</div>
       </div>
       <div class="card danger">
         <div class="card-label">Кредиты (остаток)</div>

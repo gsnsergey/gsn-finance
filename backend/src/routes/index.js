@@ -33,10 +33,11 @@ router.get('/summary/net-worth', (req, res) => {
       `SELECT COALESCE(SUM(${CURRENT_BALANCE_EXPR}), 0) as s FROM accounts a WHERE a.archived = 0`
     ).get().s
     const depositsTotal = db.prepare(`SELECT COALESCE(SUM(currentBalance), 0) as s FROM deposits WHERE closedAt IS NULL`).get().s
-    // Стоимость портфеля = cost basis (quantity × avgBuyPrice). Подключение биржевых
-    // котировок для переоценки по рынку — отдельная задача; пока используем цену покупки.
+    // Стоимость портфеля = SUM(currentValue) — поле, которое записывается при импорте
+    // из Т-Инвестиций (= quantity × currentPrice на момент pull). Близко к live-стоимости
+    // в Т-Банке, расхождение только на дрейф цены после последнего импорта.
     const holdingsTotalRub = db.prepare(
-      `SELECT COALESCE(SUM(quantity * avgBuyPrice), 0) AS s FROM holdings`
+      `SELECT COALESCE(SUM(currentValue), 0) AS s FROM holdings`
     ).get().s
     const holdingsTotal = Math.round(Number(holdingsTotalRub) * 100)
     const loansRemaining = db.prepare(`SELECT COALESCE(SUM(remainingAmount), 0) as s FROM loans`).get().s
