@@ -60,9 +60,6 @@ export async function render(root) {
         <div class="card-value">${rub(subsMonthly)}</div>
         <div class="card-sub">${subs.filter(s => s.active).length} активных</div>
       </div>
-    </div>
-
-    <div class="cards">
       <div class="card success">
         <div class="card-label">Доход сегодня</div>
         <div class="card-value">${rub(today.incomeToday)}</div>
