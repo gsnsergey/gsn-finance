@@ -16,6 +16,7 @@ import { LOAN_TYPES, loanTypeLabel } from '../data/loanTypes.js'
 import { ASSET_TYPES, assetTypeLabel } from '../data/assetTypes.js'
 import { categoryIconHTML } from '../data/categoryIcons.js'
 import { brokerAccounts } from '../data/brokerAccounts.js'
+import { providerLabel } from '../data/brokerProviders.js'
 
 // Маппер код→русская подпись для периодов подписок и обязательств.
 // Используется и в колонках таблиц (render), и в опциях select-полей в формах.
@@ -121,8 +122,7 @@ const CONFIGS = {
       { key: 'profitPct', label: '%', render: pctRender, num: true }
     ],
     sumKey: 'currentValue',
-    // Кнопка «Обновить»: дёргает внешний эндпоинт (Т-Инвестиции),
-    // после чего таблица перерисовывается из /api/holdings.
+    // Кнопка «Обновить» (legacy, single broker). Можно убрать, если есть `importMenu`.
     refresh: {
       label: 'Обновить',
       endpoint: '/api/holdings/import/tinvest',
@@ -130,6 +130,12 @@ const CONFIGS = {
       body: {},
       successMessage: 'Портфель обновлён'
     },
+    // Импорт-меню: кнопка «Импорт из брокера» с выпадающим списком всех
+    // записей broker_credentials. Если записей нет — пункт «Добавить токен →
+    // Настройки». Если записи есть — кликабельный пункт ведёт к соответствующему
+    // /api/holdings/import/{provider} (для tinkoff — brokerAccountId игнорируется,
+    // для bcs — обязателен).
+    importMenu: true,
     // Клиентские фильтры над таблицей (брокер / счёт / тип / валюта).
     // Опции селектов собираются из уникальных значений в строках.
     // Каскадных зависимостей нет (account не зависит от broker).
@@ -282,9 +288,21 @@ const CONFIGS = {
       { key: 'name', label: 'Название' },
       { key: 'amount', label: 'Сумма', render: rub, num: true },
       { key: 'period', label: 'Период', render: periodLabel },
+      { key: 'categoryId', label: 'Категория', render: (v, r, ctx) => {
+          const cat = ctx?.categoriesMap?.get(v)
+          if (!cat) return '<span style="color:var(--muted)">—</span>'
+          return `${categoryIconHTML(cat.icon)} ${escapeHtml(cat.name)}`
+        }
+      },
       { key: 'nextChargeDate', label: 'Следующий платёж', ...COL_DATE() },
       { key: 'active', label: 'Активна', render: v => v ? 'да' : 'нет' }
     ],
+    // Подгружаем категории один раз для всех колонок, чтобы render
+    // функции могли резолвить categoryId → иконка + название.
+    contextAsync: async () => {
+      const cats = await api.get('/api/categories')
+      return { categoriesMap: new Map(cats.map(c => [c.id, c])) }
+    },
     addFieldsAsync: async () => {
       const cats = await api.get('/api/categories')
       return [
@@ -342,7 +360,10 @@ const CONFIGS = {
 export function makeListView(endpoint) {
   async function render(root) {
     const cfg = CONFIGS[endpoint]
-    const rows = await api.get(`/api/${endpoint}`)
+    const [rows, ctx] = await Promise.all([
+      api.get(`/api/${endpoint}`),
+      cfg.contextAsync ? cfg.contextAsync().catch(e => { console.warn('contextAsync failed:', e); return {} }) : Promise.resolve({})
+    ])
 
     if (rows.length === 0) {
       root.innerHTML = `
@@ -361,6 +382,7 @@ export function makeListView(endpoint) {
 
     const hasAdd = !!(cfg.addFields || cfg.addFieldsAsync)
     const hasRefresh = !!cfg.refresh
+    const hasImportMenu = !!cfg.importMenu
     const hasViewMode = !!cfg.viewMode
 
     // Состояние view-mode (если задан). Сохраняется в localStorage.
@@ -381,11 +403,17 @@ export function makeListView(endpoint) {
         }).join('')}
       </div>` : ''
 
-    // Панель действий: добавить (если есть) + обновить (если есть).
-    // Раньше тут был только «+ Добавить», теперь — два варианта.
-    const actionsHtml = (hasAdd || hasRefresh) ? `
+    // Панель действий: добавить (если есть) + обновить + импорт-меню.
+    // Если есть importMenu, легаси-кнопка `refresh` не показывается (иначе задвоение).
+    const actionsHtml = (hasAdd || hasRefresh || hasImportMenu) ? `
       <div class="page-actions">
-        ${hasRefresh ? `<button class="btn" id="refresh-btn">↻ ${escapeHtml(cfg.refresh.label)}</button>` : ''}
+        ${hasRefresh && !hasImportMenu ? `<button class="btn" id="refresh-btn">↻ ${escapeHtml(cfg.refresh.label)}</button>` : ''}
+        ${hasImportMenu ? `
+          <div class="import-menu" id="import-menu-wrap">
+            <button class="btn" id="import-menu-btn">↻ Импорт из брокера <i class="fa fa-caret-down" aria-hidden="true"></i></button>
+            <div class="import-menu-dropdown" id="import-menu-dropdown" hidden></div>
+          </div>
+        ` : ''}
         ${hasAdd ? `<button class="btn btn-primary" id="add-btn">+ Добавить</button>` : ''}
       </div>` : ''
 
@@ -405,9 +433,43 @@ export function makeListView(endpoint) {
       )
     }
 
-    // Развёрнутые ветки дерева (по строковому ключу пути). По умолчанию
-    // все развёрнуты — пользователь сворачивает, что ему не нужно.
-    const treeExpanded = new Set()
+    // Свёрнутые ветки дерева (по строковому ключу пути). По умолчанию
+    // (первый визит / новый ключ в localStorage) — пустое, всё развёрнуто.
+    // Состояние сохраняется в localStorage по ключу `holdings.tree.collapsed`,
+    // так что после фильтров/«Обновить»/перезагрузки свёрнутые группы остаются свёрнутыми,
+    // а новые (например, новый брокер) появляются развёрнутыми.
+    const TREE_COLLAPSED_KEY = 'holdings.tree.collapsed'
+    const DASHBOARD_STORAGE_KEYS = {
+      broker: 'holdings.dashboard.broker.collapsed',
+      account: 'holdings.dashboard.account.collapsed'
+    }
+
+    function loadCollapsedSet(key) {
+      try {
+        const raw = localStorage.getItem(key)
+        if (!raw) return new Set()
+        const arr = JSON.parse(raw)
+        return new Set(Array.isArray(arr) ? arr : [])
+      } catch { return new Set() }
+    }
+    function saveCollapsedSet(key, set) {
+      try { localStorage.setItem(key, JSON.stringify([...set])) } catch {}
+    }
+    const treeCollapsed = loadCollapsedSet(TREE_COLLAPSED_KEY)
+    // Сводный Set по всем dashboard-секциям (broker + account). Ключ
+    // конкретной секции выбирается через DASHBOARD_STORAGE_KEYS[groupBy]
+    // при сохранении — так проще, чем два независимых Set в замыкании.
+    const dashboardCollapsed = new Set()
+    for (const groupBy of Object.keys(DASHBOARD_STORAGE_KEYS)) {
+      const set = loadCollapsedSet(DASHBOARD_STORAGE_KEYS[groupBy])
+      if (set.has(groupBy)) dashboardCollapsed.add(groupBy)
+    }
+    function toggleDashboardSection(groupBy) {
+      if (dashboardCollapsed.has(groupBy)) dashboardCollapsed.delete(groupBy)
+      else dashboardCollapsed.add(groupBy)
+      const key = DASHBOARD_STORAGE_KEYS[groupBy]
+      if (key) saveCollapsedSet(key, dashboardCollapsed.has(groupBy) ? new Set([groupBy]) : new Set())
+    }
 
     function buildTree(levels, rows) {
       // Возвращает массив { key: path, level: 0..n-1, label, metricsRows, children: [...] }
@@ -455,13 +517,14 @@ export function makeListView(endpoint) {
       }
       // Группа — кликабельный заголовок + (если развёрнута) дети.
       const path = treePath(node)
-      const isOpen = treeExpanded.has(path)
+      // Свёрнутые хранятся в `treeCollapsed`. По умолчанию (нет в Set) — развёрнуто.
+      const isOpen = !treeCollapsed.has(path)
       const title = cfg.tree.groupTitle ? cfg.tree.groupTitle(node.key, node.level) : { label: node.key }
       const metrics = cfg.tree.groupMetrics ? cfg.tree.groupMetrics(node.rows) : []
       return `
         <div class="tree-group" data-path="${escapeHtml(path)}">
-          <div class="tree-group-header${isOpen ? ' open' : ''}" data-toggle="${escapeHtml(path)}">
-            <span class="tree-caret">${isOpen ? '▼' : '▶'}</span>
+          <div class="tree-group-header${isOpen ? ' open' : ''}" data-toggle="${escapeHtml(path)}" role="button" tabindex="0" aria-expanded="${isOpen ? 'true' : 'false'}">
+            <i class="fa fa-chevron-${isOpen ? 'down' : 'right'} tree-caret" aria-hidden="true"></i>
             <span class="tree-group-label">${escapeHtml(title.label || node.key)}</span>
             <span class="tree-group-metrics">${metrics.map(m =>
               `<span class="tree-group-metric"><span class="muted">${escapeHtml(m.label)}:</span> ${m.value}</span>`
@@ -472,9 +535,11 @@ export function makeListView(endpoint) {
       `
     }
 
-    function renderTreeSection() {
-      const filtered = getFilteredRows()
-      const dashboard = (cfg.dashboard || []).map(section => {
+    // Рендер мини-дашборда с возможностью сворачивания секции целиком.
+// `collapsedSet` — Set свёрнутых секций (по section.groupBy).
+    function renderDashboard(filtered, collapsedSet) {
+      return (cfg.dashboard || []).map(section => {
+        const isCollapsed = collapsedSet.has(section.groupBy)
         const groups = new Map()
         for (const r of filtered) {
           const key = r[section.groupBy] ?? '—'
@@ -493,11 +558,19 @@ export function makeListView(endpoint) {
             `).join('')}
           </div>`
         }).join('')
-        return `<div class="dashboard-section">
-          <div class="dashboard-section-title">${escapeHtml(section.title)}</div>
-          <div class="dashboard-cards">${cards}</div>
+        return `<div class="dashboard-section${isCollapsed ? ' collapsed' : ''}" data-dashboard-group="${escapeHtml(section.groupBy)}">
+          <div class="dashboard-section-title dashboard-section-toggle" data-dashboard-toggle="${escapeHtml(section.groupBy)}" role="button" tabindex="0" aria-expanded="${isCollapsed ? 'false' : 'true'}">
+            <i class="fa fa-chevron-${isCollapsed ? 'right' : 'down'}" aria-hidden="true"></i>
+            <span>${escapeHtml(section.title)}</span>
+          </div>
+          ${isCollapsed ? '' : `<div class="dashboard-cards">${cards}</div>`}
         </div>`
       }).join('')
+    }
+
+    function renderTreeSection() {
+      const filtered = getFilteredRows()
+      const dashboard = renderDashboard(filtered, dashboardCollapsed)
 
       // Опции фильтров — уникальные значения из исходных (нефильтрованных) строк.
       const filtersBar = filters.length > 0 ? `
@@ -517,18 +590,10 @@ export function makeListView(endpoint) {
 
       // Строим дерево
       const treeNodes = buildTree(cfg.tree.levels, filtered)
-      // По умолчанию разворачиваем все группы (первый рендер дерева).
-      if (treeExpanded.size === 0) {
-        const walk = (nodes, prefix = '') => {
-          for (const n of nodes) {
-            if (n.kind === 'group') {
-              treeExpanded.add(`${prefix}g${n.level}:${n.key}`)
-              walk(n.children, `${prefix}g${n.level}:${n.key}:`)
-            }
-          }
-        }
-        walk(treeNodes)
-      }
+      // Никакого «force expand all при первом рендере» — теперь состояние
+      // целиком живёт в `treeCollapsed` (загружается из localStorage).
+      // Если ключа нет — Set пустой, все группы развёрнуты по умолчанию.
+      // Если ключ есть — пользователь увидит свой прошлый выбор.
 
       const treeHtml = filtered.length === 0 ? `
         <div class="empty">
@@ -551,14 +616,13 @@ export function makeListView(endpoint) {
         root.appendChild(div)
       }
 
-      // Обработчики фильтров (те же, что в таблице)
+      // Обработчики фильтров. Сбрасывать treeCollapsed НЕ нужно — пути к
+      // неотображаемым группам просто игнорируются; то, что осталось в Set,
+      // продолжает действовать. Это и есть желаемое persist-поведение.
       root.querySelectorAll('select[data-filter-key]').forEach(sel => {
         sel.addEventListener('change', () => {
           const f = filters.find(x => x.key === sel.dataset.filterKey)
           if (f) f.value = sel.value
-          // Сбрасываем expanded при смене фильтра — иначе часть групп может
-          // исчезнуть, а часть expanded-флагов останется «висеть» в Set.
-          treeExpanded.clear()
           renderSection()
         })
       })
@@ -566,18 +630,35 @@ export function makeListView(endpoint) {
       if (resetBtn) {
         resetBtn.addEventListener('click', () => {
           filters.forEach(f => f.value = '')
-          treeExpanded.clear()
+          // При сбросе фильтров — НЕ трогаем свёрнутые группы (persist).
           renderSection()
         })
       }
 
-      // Обработчики раскрытия групп
+      // Обработчики раскрытия групп (мышка + клавиатура). Сохраняем в localStorage.
       root.querySelectorAll('[data-toggle]').forEach(el => {
-        el.addEventListener('click', () => {
+        const toggle = () => {
           const p = el.dataset.toggle
-          if (treeExpanded.has(p)) treeExpanded.delete(p)
-          else treeExpanded.add(p)
+          if (treeCollapsed.has(p)) treeCollapsed.delete(p)
+          else treeCollapsed.add(p)
+          saveCollapsedSet(TREE_COLLAPSED_KEY, treeCollapsed)
           renderTreeSection()
+        }
+        el.addEventListener('click', toggle)
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
+        })
+      })
+
+      // Свёртка/развёртка секций мини-дашборда (тот же UX что и в таблице).
+      root.querySelectorAll('[data-dashboard-toggle]').forEach(el => {
+        const toggle = () => {
+          toggleDashboardSection(el.dataset.dashboardToggle)
+          renderTreeSection()
+        }
+        el.addEventListener('click', toggle)
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
         })
       })
     }
@@ -588,30 +669,7 @@ export function makeListView(endpoint) {
 
       // Мини-дашборд (если задан) — агрегаты по группам. Считается по
       // ОТФИЛЬТРОВАННЫМ строкам, чтобы итоги согласовались с таблицей ниже.
-      const dashboard = (cfg.dashboard || []).map(section => {
-        const groups = new Map()
-        for (const r of filtered) {
-          const key = r[section.groupBy] ?? '—'
-          if (!groups.has(key)) groups.set(key, [])
-          groups.get(key).push(r)
-        }
-        const cards = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([key, rows]) => {
-          const titleRaw = section.valueRender ? section.valueRender(key) : key
-          return `<div class="dashboard-card">
-            <div class="dashboard-card-title">${escapeHtml(String(titleRaw))}</div>
-            ${section.metrics(rows).map(m => `
-              <div class="dashboard-metric">
-                <span class="dashboard-metric-label">${escapeHtml(m.label)}</span>
-                <span class="dashboard-metric-value">${m.value}</span>
-              </div>
-            `).join('')}
-          </div>`
-        }).join('')
-        return `<div class="dashboard-section">
-          <div class="dashboard-section-title">${escapeHtml(section.title)}</div>
-          <div class="dashboard-cards">${cards}</div>
-        </div>`
-      }).join('')
+      const dashboard = renderDashboard(filtered, dashboardCollapsed)
 
       // Опции фильтров — уникальные значения из исходных (нефильтрованных) строк.
       // Если фильтровать каскадно (account зависит от broker), нужно передавать
@@ -651,7 +709,7 @@ export function makeListView(endpoint) {
                     const v = r[c.key]
                     // render-функции получают (value, row) — старые игнорируют row,
                     // новые (num4Cur/profitCur/…) читают row.currency для символа валюты.
-                    const rendered = c.render ? c.render(v, r) : (v ?? '')
+                    const rendered = c.render ? c.render(v, r, ctx) : (v ?? '')
                     return `<td class="${c.num ? 'num' : ''}">${rendered}</td>`
                   }).join('')}
                   <td>
@@ -700,11 +758,24 @@ export function makeListView(endpoint) {
           renderSection()
         })
       }
+
+      // Свёртка/развёртка секций мини-дашборда (мышка + клавиатура).
+      root.querySelectorAll('[data-dashboard-toggle]').forEach(el => {
+        const toggle = () => {
+          toggleDashboardSection(el.dataset.dashboardToggle)
+          renderSection()
+        }
+        el.addEventListener('click', toggle)
+        el.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle() }
+        })
+      })
     }
 
     root.innerHTML = `${toolbarHtml}`
     wireFormButton(root, cfg, endpoint, null, render)
     wireRefreshButton(root, cfg, render)
+    wireImportMenu(root, cfg, render)
 
     // Переключатель режима (Таблица / Дерево).
     root.querySelectorAll('.view-mode-btn').forEach(btn => {
@@ -797,6 +868,85 @@ function wireRefreshButton(root, cfg, render) {
       btn.textContent = prevText
     }
     // В success ветке render пересоздаст DOM и кнопку — disabled снимется автоматически.
+  })
+}
+
+// Кнопка «Импорт из брокера» с дропдауном. Подтягивает /api/broker-credentials
+// и для каждой записи показывает пункт меню → POST /api/holdings/import/{provider}.
+// Если записей нет — единственный пункт «Добавить токен → Настройки».
+function wireImportMenu(root, cfg, render) {
+  if (!cfg.importMenu) return
+  const btn = document.getElementById('import-menu-btn')
+  const dropdown = document.getElementById('import-menu-dropdown')
+  if (!btn || !dropdown) return
+
+  async function open() {
+    let creds
+    try {
+      creds = await api.get('/api/broker-credentials')
+    } catch (e) {
+      dropdown.innerHTML = `<div class="import-menu-error">Не удалось загрузить: ${escapeHtml(e.message)}</div>`
+      dropdown.hidden = false
+      return
+    }
+    if (creds.length === 0) {
+      dropdown.innerHTML = `<div class="import-menu-empty">
+        <div style="margin-bottom:8px">Нет интеграций.</div>
+        <a href="#/settings" class="btn btn-sm btn-primary" id="goto-settings">→ Открыть Настройки</a>
+      </div>`
+      dropdown.hidden = false
+      dropdown.querySelector('#goto-settings').addEventListener('click', () => { dropdown.hidden = true })
+      return
+    }
+    const items = creds.map(c => {
+      // Для Т-Инвестиций brokerAccountId в теле не нужен (один токен на все счета).
+      // Для БКС — обязателен.
+      const endpoint = `/api/holdings/import/${c.provider}`
+      const body = c.provider === 'tinkoff' ? {} : { brokerAccountId: c.brokerAccountId }
+      return `<button class="import-menu-item" data-provider="${escapeHtml(c.provider)}" data-endpoint="${escapeHtml(endpoint)}" data-body='${escapeHtml(JSON.stringify(body))}'>
+        <div class="import-menu-item-title">${escapeHtml(providerLabel(c.provider))}${c.label ? ` <span class="muted-inline">${escapeHtml(c.label)}</span>` : ''}</div>
+        <div class="import-menu-item-sub"><code>${escapeHtml(c.brokerAccountId)}</code></div>
+      </button>`
+    }).join('')
+    dropdown.innerHTML = items
+    dropdown.hidden = false
+    dropdown.querySelectorAll('.import-menu-item').forEach(item => {
+      item.addEventListener('click', async () => {
+        dropdown.hidden = true
+        btn.disabled = true
+        const prev = btn.innerHTML
+        btn.textContent = '↻ Импорт…'
+        try {
+          const endpoint = item.dataset.endpoint
+          const body = JSON.parse(item.dataset.body)
+          const result = await api.post(endpoint, body)
+          // Тинькофф возвращает `{ ok, dryRun, tokenSource, summary }`,
+          // БКС — `{ ok, dryRun, positions, upserted }`. Нормализуем для UI.
+          const upserted = result?.upserted
+            ?? result?.summary?.positionsCount
+            ?? (result?.positions ? result.positions.length : null)
+          toast(upserted != null
+            ? `${providerLabel(item.dataset.provider)}: импортировано ${upserted} позиций`
+            : `${providerLabel(item.dataset.provider)}: готово`,
+            'success')
+          await render(root)
+        } catch (e) {
+          toast(e.message || 'Ошибка импорта', 'error')
+          btn.disabled = false
+          btn.innerHTML = prev
+        }
+      })
+    })
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (dropdown.hidden) open()
+    else dropdown.hidden = true
+  })
+  // Закрыть по клику вне
+  document.addEventListener('click', (e) => {
+    if (!dropdown.hidden && !dropdown.contains(e.target) && e.target !== btn) dropdown.hidden = true
   })
 }
 

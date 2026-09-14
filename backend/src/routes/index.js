@@ -4,6 +4,8 @@ import { createCrudRouter, TABLE_CONFIGS } from './crud.js'
 import accountsRouter from './accounts.js'
 import transactionsRouter from './transactions.js'
 import tInvestRouter from './tinvest.js'
+import brokerCredentialsRouter from './broker_credentials.js'
+import bcsRouter from './bcs.js'
 import { CURRENT_BALANCE_EXPR, todayIso } from '../balance.js'
 
 const router = express.Router()
@@ -21,8 +23,14 @@ for (const name of Object.keys(TABLE_CONFIGS)) {
 // transactions — отдельный (фильтры + обновление баланса)
 router.use('/transactions', transactionsRouter)
 
-// Импорт портфеля из Т-Инвестиций (разовая команда, требует TINKOFF_INVEST_TOKEN в data/.env)
+// Импорт портфеля из Т-Инвестиций (разовая команда)
 router.use('/holdings/import/tinvest', tInvestRouter)
+
+// Импорт портфеля из БКС (разовая команда, brokerAccountId в URL/теле)
+router.use('/holdings/import/bcs', bcsRouter)
+
+// CRUD API-токенов брокеров (Т-Инвестиции, БКС, ...)
+router.use('/broker-credentials', brokerCredentialsRouter)
 
 // Сводный эндпоинт для дашборда (используется UI и CLI)
 router.get('/summary/net-worth', (req, res) => {

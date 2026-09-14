@@ -1,9 +1,13 @@
 import { api, rub, toast } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { CATEGORY_ICONS, CATEGORY_EMOJIS, iconHTML } from '../data/categoryIcons.js'
+import { BROKER_PROVIDERS as PROVIDERS, providerLabel } from '../data/brokerProviders.js'
 
 export async function render(root) {
-  const cats = await api.get('/api/categories')
+  const [cats, creds] = await Promise.all([
+    api.get('/api/categories'),
+    api.get('/api/broker-credentials').catch(() => [])
+  ])
   const active = cats.filter(c => !c.archived)
   const archived = cats.filter(c => c.archived)
 
@@ -24,36 +28,15 @@ export async function render(root) {
   }
 
   root.innerHTML = `
-    <div class="cards">
-      <div class="card">
-        <div class="card-label">Версия</div>
-        <div class="card-value">0.1.0</div>
-        <div class="card-sub">Phase 0+ — каркас, формы, справочники</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Категорий</div>
-        <div class="card-value">${active.length}</div>
-        <div class="card-sub">активных из ${cats.length}</div>
-      </div>
+    <div class="section-title section-title-row">
+      <span>Категории <span class="muted-inline">${active.length} активных${archived.length > 0 ? ` · ${archived.length} в архиве` : ''}</span></span>
+      <span class="section-title-actions">
+        <button class="btn btn-sm" id="export-btn" title="Скачать все данные в JSON"><i class="fa fa-download"></i> Экспорт JSON</button>
+        <button class="btn btn-primary btn-sm" id="add-cat">+ Добавить</button>
+      </span>
     </div>
-
-    <div class="section-title">Данные</div>
-    <div class="cards">
-      <div class="card">
-        <div class="card-label">Экспорт</div>
-        <p style="margin: 8px 0 12px; color: var(--muted); font-size: 13px;">
-          Все данные в JSON-файле для бэкапа или миграции.
-        </p>
-        <button class="btn btn-primary" id="export-btn">Скачать JSON</button>
-      </div>
-    </div>
-
-    <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">
-      <span>Категории</span>
-      <button class="btn btn-primary btn-sm" id="add-cat">+ Добавить</button>
-    </div>
-    <div class="table-wrap"><table class="table" id="cats-table">
-      <thead><tr><th style="width:32px"></th><th>Название</th><th>Тип</th><th>Цвет</th><th style="width:90px"></th></tr></thead>
+    <div class="table-wrap table-wrap-compact"><table class="table table-compact" id="cats-table">
+      <thead><tr><th style="width:32px"></th><th>Название</th><th style="width:90px">Тип</th><th style="width:50px">Цвет</th><th style="width:80px"></th></tr></thead>
       <tbody>
         ${active.length === 0
           ? '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Нет активных категорий</td></tr>'
@@ -61,8 +44,8 @@ export async function render(root) {
             <tr data-id="${c.id}">
               <td style="color:${c.color}">${iconHTML(c.icon)}</td>
               <td>${escapeHtml(c.name)}</td>
-              <td>${c.type === 'expense' ? 'Расход' : 'Доход'}</td>
-              <td><span style="display:inline-block;width:20px;height:20px;border-radius:4px;background:${c.color};vertical-align:middle"></span> ${c.color || ''}</td>
+              <td><span class="cat-type cat-type-${c.type}">${c.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
+              <td><span class="cat-color-swatch" style="background:${c.color}" title="${escapeHtml(c.color || '')}"></span></td>
               <td>
                 <div class="row-actions">
                   <button class="btn btn-sm" data-action="edit" data-id="${c.id}" title="Редактировать">✎</button>
@@ -77,15 +60,15 @@ export async function render(root) {
 
     ${archived.length > 0 ? `
       <div class="section-title">Архив (${archived.length})</div>
-      <div class="table-wrap"><table class="table">
-        <thead><tr><th style="width:32px"></th><th>Название</th><th>Тип</th><th>Цвет</th><th style="width:90px"></th></tr></thead>
+      <div class="table-wrap table-wrap-compact"><table class="table table-compact">
+        <thead><tr><th style="width:32px"></th><th>Название</th><th style="width:90px">Тип</th><th style="width:50px">Цвет</th><th style="width:80px"></th></tr></thead>
         <tbody>
           ${archived.map(c => `
             <tr>
               <td style="color:${c.color}">${iconHTML(c.icon)}</td>
               <td>${escapeHtml(c.name)}</td>
-              <td>${c.type === 'expense' ? 'Расход' : 'Доход'}</td>
-              <td><span style="display:inline-block;width:20px;height:20px;border-radius:4px;background:${c.color};vertical-align:middle"></span> ${c.color || ''}</td>
+              <td><span class="cat-type cat-type-${c.type}">${c.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
+              <td><span class="cat-color-swatch" style="background:${c.color}" title="${escapeHtml(c.color || '')}"></span></td>
               <td><button class="btn btn-sm" data-action="unarchive" data-id="${c.id}" title="Восстановить">↺</button></td>
             </tr>
           `).join('')}
@@ -93,13 +76,41 @@ export async function render(root) {
       </table></div>
     ` : ''}
 
-    <div class="section-title">Подсказка</div>
-    <div class="card">
-      <p style="margin:0;color:var(--muted);font-size:13px;line-height:1.6">
-        Иконки — из <a href="https://fontawesome.com/v4/icons/" target="_blank">FontAwesome 4.7</a>.
-        Стиль иконки в UI зависит от цвета категории.
-      </p>
+    <div class="section-title section-title-row">
+      <span>Интеграции с брокерами <span class="muted-inline">${creds.length} записей · токены в БД зашифрованы</span></span>
+      <span class="section-title-actions">
+        <button class="btn btn-primary btn-sm" id="add-cred">+ Добавить токен</button>
+      </span>
     </div>
+    ${creds.length === 0 ? `
+      <div class="empty-inline">
+        <div>Нет интеграций. Добавьте токен Т-Инвестиций (один на все счета, brokerAccountId = <code>all</code>) или БКС (отдельный на каждый счёт).</div>
+        <div style="margin-top:8px;font-size:12px;color:var(--muted)">
+          Токены хранятся в БД, зашифрованы AES-256-GCM с мастер-ключом <code>data/.encryption.key</code>. Не удаляйте этот файл — иначе токены придётся ввести заново.
+        </div>
+      </div>
+    ` : `
+      <div class="table-wrap table-wrap-compact"><table class="table table-compact">
+        <thead><tr><th>Провайдер</th><th>brokerAccountId</th><th>Метка</th><th>Токен</th><th>Последний успех</th><th style="width:80px"></th></tr></thead>
+        <tbody>
+          ${creds.map(c => `
+            <tr data-id="${c.id}">
+              <td>${escapeHtml(providerLabel(c.provider))}</td>
+              <td><code style="font-size:12px">${escapeHtml(c.brokerAccountId)}</code></td>
+              <td>${escapeHtml(c.label || '')}</td>
+              <td><code style="font-size:12px">${escapeHtml(c.tokenMask)}</code></td>
+              <td style="font-size:12px;color:var(--muted)">${c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleString('ru-RU') : '—'}${c.lastError ? ` <span style="color:#dc2626" title="${escapeHtml(c.lastError)}">⚠</span>` : ''}</td>
+              <td>
+                <div class="row-actions">
+                  <button class="btn btn-sm" data-action="cred-edit" data-id="${c.id}" title="Редактировать">✎</button>
+                  <button class="btn btn-sm btn-danger" data-action="cred-delete" data-id="${c.id}" title="Удалить">×</button>
+                </div>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table></div>
+    `}
   `
 
   document.getElementById('export-btn').addEventListener('click', () => {
@@ -107,6 +118,26 @@ export async function render(root) {
   })
 
   document.getElementById('add-cat').addEventListener('click', () => openCategoryForm(root, null))
+
+  const addCredBtn = document.getElementById('add-cred')
+  if (addCredBtn) addCredBtn.addEventListener('click', () => openBrokerCredentialForm(root, null, creds))
+
+  root.querySelectorAll('[data-action="cred-edit"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const c = creds.find(x => x.id === btn.dataset.id)
+      if (c) openBrokerCredentialForm(root, c, creds)
+    })
+  })
+  root.querySelectorAll('[data-action="cred-delete"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('Удалить токен? Импорт из этого брокера/счёта перестанет работать.')) return
+      try {
+        await api.del(`/api/broker-credentials/${btn.dataset.id}`)
+        toast('Токен удалён', 'success')
+        render(root)
+      } catch (e) { toast(e.message, 'error') }
+    })
+  })
 
   root.querySelectorAll('[data-action="edit"]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -173,6 +204,20 @@ function openCategoryForm(root, category) {
       } catch (e) { throw e }
     },
     onMount: (dialog) => {
+      // Подсказка «Иконки — FontAwesome 4.7» рядом с label поля «Иконка»,
+      // переехала из нижней карточки (задача ui-nastroyki-ubrat-lishnee).
+      const iconLabel = dialog.querySelector('[name="icon"]')?.closest('.form-field')?.querySelector('label')
+      if (iconLabel) {
+        const hint = document.createElement('a')
+        hint.href = 'https://fontawesome.com/v4/icons/'
+        hint.target = '_blank'
+        hint.rel = 'noopener'
+        hint.title = 'Открыть каталог FontAwesome 4.7'
+        hint.textContent = '?'
+        hint.style.cssText = 'display:inline-block;margin-left:6px;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;background:var(--bg);color:var(--muted);font-size:11px;text-decoration:none;font-weight:600'
+        iconLabel.appendChild(hint)
+      }
+
       // Добавляем пикер иконок сразу после поля "icon"
       const iconField = dialog.querySelector('[name="icon"]')?.closest('.form-field')
       if (!iconField) return
@@ -236,3 +281,59 @@ function escapeHtml(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }
 function escapeAttr(v) { return escapeHtml(v) }
+
+// --- Broker credentials (API-токены брокеров) -----------------------------
+
+// PROVIDERS и providerLabel импортируются из ../data/brokerProviders.js
+// (общий справочник с ui/js/views/simple-list.js).
+
+// Модалка добавления/редактирования токена брокера.
+// Безопасность: при сохранении POST/PATCH возвращает запись с открытым `token`,
+// мы её НИГДЕ не показываем кроме подтверждения что сохранено (текст «Сохранено»).
+function openBrokerCredentialForm(root, existing, allCreds) {
+  const isEdit = !!existing
+  openModal({
+    title: isEdit ? 'Редактировать токен брокера' : 'Новый токен брокера',
+    submitLabel: isEdit ? 'Сохранить' : 'Создать',
+    fields: [
+      {
+        name: 'provider', label: 'Провайдер', type: 'select', required: true,
+        value: existing?.provider || 'tinkoff',
+        options: PROVIDERS
+      },
+      {
+        name: 'brokerAccountId', label: 'brokerAccountId', type: 'text', required: true,
+        value: existing?.brokerAccountId || '',
+        placeholder: 'для Т-Инвестиций: all; для БКС: id счёта (L01xxx)'
+      },
+      {
+        name: 'label', label: 'Метка (необязательно)', type: 'text',
+        value: existing?.label || '',
+        placeholder: 'ИИС, Основной брокерский…'
+      },
+      {
+        name: 'token', label: isEdit ? 'Новый токен (оставьте пустым, чтобы не менять)' : 'Токен',
+        type: 'password', required: !isEdit,
+        value: '',
+        placeholder: 'вставьте refresh_token из ЛК БКС или токен Т-Инвестиций'
+      }
+    ],
+    onSubmit: async (data) => {
+      try {
+        if (isEdit) {
+          const patch = { label: data.label, brokerAccountId: data.brokerAccountId }
+          if (data.token) patch.token = data.token
+          await api.patch(`/api/broker-credentials/${existing.id}`, patch)
+          toast('Токен обновлён', 'success')
+        } else {
+          await api.post('/api/broker-credentials', data)
+          toast('Токен сохранён', 'success')
+        }
+        render(root)
+      } catch (e) {
+        // Показываем серверное сообщение (валидация, дубль и т. п.)
+        throw e
+      }
+    }
+  })
+}

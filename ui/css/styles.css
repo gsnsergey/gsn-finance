@@ -156,6 +156,27 @@ html, body {
 .card-label { font-size: 12px; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em; }
 .card-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
 .card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+/* Карточка-ссылка (дашборд): обёрнута в <a>, клик ведёт в раздел.
+   Тонкий hover/focus, чтобы намекнуть на интерактивность, без перегруза. */
+.card-link {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.card-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  border-color: var(--accent);
+}
+.card-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Кликабельная строка «Последние операции» — тот же hover-эффект, что у tr в таблице. */
+.table .tx-row { cursor: pointer; }
+.table .tx-row:hover td { background: rgba(37,99,235,0.04); }
+.table .tx-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .card.accent .card-value { color: var(--accent); }
 .card.success .card-value { color: var(--success); }
 .card.danger .card-value { color: var(--danger); }
@@ -760,6 +781,43 @@ html, body {
 }
 .view-mode-toggle .view-mode-btn + .view-mode-btn { border-left: 1px solid var(--border); }
 
+/* === Import menu (dropdown на кнопке «Импорт из брокера») === */
+.import-menu { position: relative; display: inline-block; }
+.import-menu-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  padding: 4px;
+  z-index: 50;
+}
+.import-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.import-menu-item:hover { background: rgba(37,99,235,0.08); }
+.import-menu-item-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.import-menu-item-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.import-menu-item-sub code { font-size: 11px; padding: 0 4px; background: var(--bg); border-radius: 3px; }
+.import-menu-empty, .import-menu-error {
+  padding: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.import-menu-error { color: #dc2626; }
+
 /* === Account cards (PAN-маски) === */
 .cards-badge {
   color: var(--accent);
@@ -837,6 +895,51 @@ html, body {
 .tree-leaf-qty { text-align: right; font-variant-numeric: tabular-nums; }
 .tree-leaf-value, .tree-leaf-profit { text-align: right; }
 
+/* === Settings page: компактная таблица категорий ===
+   Раньше padding 8px12px, hex-код в колонке «Цвет», плюс здоровенная карточка
+   «Категорий N/из M» сверху. Из-за этого помещалось 5 категорий. Теперь — до 12. */
+.table-compact th, .table-compact td { padding: 5px 10px; font-size: 13px; }
+.table-compact th { font-size: 10px; }
+.cat-color-swatch {
+  display: inline-block;
+  width: 14px; height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  vertical-align: middle;
+}
+/* Тег-тип категории (Расход/Доход) вместо простого текста. */
+.cat-type {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.cat-type-expense { background: rgba(220, 38, 38, 0.08); color: #dc2626; }
+.cat-type-income  { background: rgba(22, 163, 74, 0.08); color: #16a34a; }
+/* Заголовок секции с inline-действиями справа («Категории 16 · Экспорт · + Добавить»). */
+.section-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.section-title-actions { display: inline-flex; gap: 8px; }
+.muted-inline { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 4px; }
+/* Inline-empty для случая «список пуст» внутри секции настроек (без рамки/тени). */
+.empty-inline {
+  padding: 16px;
+  background: var(--bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.empty-inline code { font-size: 12px; padding: 1px 4px; background: var(--surface); border-radius: 3px; }
+
 /* === Mini-dashboard (агрегаты по группам, над таблицей) === */
 .dashboard-section { margin-bottom: 12px; }
 .dashboard-section-title {
@@ -847,6 +950,23 @@ html, body {
   letter-spacing: 0.04em;
   margin-bottom: 8px;
 }
+/* Кликабельный заголовок секции дашборда: chevron + название,
+   hover/aria/focus — как у дропдауна. */
+.dashboard-section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin-left: -8px;
+  margin-bottom: 8px;
+  user-select: none;
+  transition: background 0.1s;
+}
+.dashboard-section-toggle:hover { background: rgba(0,0,0,0.04); color: var(--text); }
+.dashboard-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dashboard-section-toggle .fa { font-size: 10px; width: 10px; text-align: center; }
 .dashboard-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

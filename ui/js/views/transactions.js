@@ -24,6 +24,21 @@ export async function render(root) {
   // Состояние фильтров в замыкании. Каждое изменение → запрос к API + перерисовка таблицы.
   const filters = { from: '', to: '', categoryId: '', type: '', accountId: '', q: '' }
 
+  // Начальные значения из hash (?from=…&to=…&type=…&accountId=…).
+  // Используется дашбордом: карточки «Доход/Расход сегодня» ведут сюда с уже
+  // выставленными фильтрами, чтобы пользователь сразу видел операции за сегодня.
+  const hash = window.location.hash || ''
+  const qIdx = hash.indexOf('?')
+  if (qIdx >= 0) {
+    try {
+      const params = new URLSearchParams(hash.slice(qIdx + 1))
+      for (const k of Object.keys(filters)) {
+        const v = params.get(k)
+        if (v) filters[k] = v
+      }
+    } catch { /* malformed query — игнорируем */ }
+  }
+
   // Строим query string для /api/transactions из текущих фильтров.
   function buildQuery() {
     const params = new URLSearchParams()
@@ -212,7 +227,7 @@ function debounce(fn, ms) {
   }
 }
 
-function openTransactionForm(root, accounts, categories, tx) {
+export function openTransactionForm(root, accounts, categories, tx) {
   if (!accounts || accounts.length === 0) {
     toast('Сначала создайте счёт', 'error')
     return

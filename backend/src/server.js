@@ -27,6 +27,7 @@ app.get('/api', (req, res) => {
     endpoints: [
       'GET    /api/health',
       'GET    /api/summary/net-worth',
+      'GET    /api/summary/today',
       'CRUD   /api/accounts',
       'CRUD   /api/transactions',
       'CRUD   /api/categories',
@@ -34,7 +35,10 @@ app.get('/api', (req, res) => {
       'CRUD   /api/holdings',
       'CRUD   /api/loans',
       'CRUD   /api/subscriptions',
-      'CRUD   /api/obligations'
+      'CRUD   /api/obligations',
+      'POST   /api/holdings/import/tinvest',
+      'POST   /api/holdings/import/bcs',
+      'CRUD   /api/broker-credentials'
     ]
   })
 })

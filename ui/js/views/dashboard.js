@@ -1,12 +1,13 @@
 import { api, rub } from '../api.js'
 
 export async function render(root) {
-  const [nw, subs, tx, accounts, today] = await Promise.all([
+  const [nw, subs, tx, accounts, today, catsList] = await Promise.all([
     api.get('/api/summary/net-worth'),
     api.get('/api/subscriptions'),
     api.get('/api/transactions?limit=5'),
     api.get('/api/accounts'),
-    api.get('/api/summary/today')
+    api.get('/api/summary/today'),
+    api.get('/api/categories')
   ])
 
   // Итог по счетам — по реальному остатку (balance + операции после даты сверки),
@@ -29,56 +30,35 @@ export async function render(root) {
   // (подписки с периодом monthly/yearly/weekly уже приведены к месячному значению).
   const obligationsTotal = (nw.loansRemaining || 0) + Math.round((subsMonthly || 0) * 12)
 
+  // Карточка — обёрнута в <a href="...">, чтобы клик работал как ссылка:
+  // правый клик «Открыть в новой вкладке», Tab/Enter из коробки, focus-ring через :focus-visible.
+  // «Капитал» — сводка «Активы − обязательства»; отдельной страницы нет, ведём
+  // на /obligations, где видна разбивка обязательств (как рекомендовал автор задачи — вариант (b)).
+  // Карточка «На картах» ведёт на /accounts — там есть карты и PAN-маски.
+  // «Доход/Расход сегодня» — пробрасывают from/to/type в hash; transactions.js
+  // (см. T8) уже принимает эти query-параметры через `#/transactions?from=...&to=...&type=...`.
+  const todayQ = `from=${today.date}&to=${today.date}`
+  const cardLink = (href, klass, label, value, sub) =>
+    `<a class="card card-link ${klass || ''}" href="${href}">
+      <div class="card-label">${label}</div>
+      <div class="card-value">${value}</div>
+      <div class="card-sub">${sub}</div>
+    </a>`
+
   root.innerHTML = `
     <div class="cards">
-      <div class="card ${nwClass}">
-        <div class="card-label">Капитал</div>
-        <div class="card-value">${rub(nw.netWorth)}</div>
-        <div class="card-sub">Активы − обязательства</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Вклады</div>
-        <div class="card-value">${rub(nw.depositsTotal)}</div>
-        <div class="card-sub">Открытые депозиты</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Портфель</div>
-        <div class="card-value">${rub(nw.holdingsTotal)}</div>
-        <div class="card-sub">${(nw.holdingsTotal || 0) === 0 ? 'Нет позиций' : 'Стоимость (по последнему импорту)'}</div>
-      </div>
-      <div class="card danger">
-        <div class="card-label">Кредиты (остаток)</div>
-        <div class="card-value">${rub(nw.loansRemaining)}</div>
-        <div class="card-sub">Сколько должны</div>
-      </div>
-      <div class="card danger">
-        <div class="card-label">Обязательства всего</div>
-        <div class="card-value">${rub(obligationsTotal)}</div>
-        <div class="card-sub">Кредиты + годовая сумма подписок</div>
-      </div>
+      ${cardLink('#/obligations', nwClass, 'Капитал', rub(nw.netWorth), 'Активы − обязательства')}
+      ${cardLink('#/deposits', '', 'Вклады', rub(nw.depositsTotal), 'Открытые депозиты')}
+      ${cardLink('#/portfolio', '', 'Портфель', rub(nw.holdingsTotal), (nw.holdingsTotal || 0) === 0 ? 'Нет позиций' : 'Стоимость (по последнему импорту)')}
+      ${cardLink('#/loans', 'danger', 'Кредиты (остаток)', rub(nw.loansRemaining), 'Сколько должны')}
+      ${cardLink('#/obligations', 'danger', 'Обязательства всего', rub(obligationsTotal), 'Кредиты + годовая сумма подписок')}
     </div>
 
     <div class="cards">
-      <div class="card">
-        <div class="card-label">Подписки / мес</div>
-        <div class="card-value">${rub(subsMonthly)}</div>
-        <div class="card-sub">${subs.filter(s => s.active).length} активных</div>
-      </div>
-      <div class="card accent">
-        <div class="card-label">На картах</div>
-        <div class="card-value">${rub(accountsTotal)}</div>
-        <div class="card-sub">Все счета, с учётом операций</div>
-      </div>
-      <div class="card success">
-        <div class="card-label">Доход сегодня</div>
-        <div class="card-value">${rub(today.incomeToday)}</div>
-        <div class="card-sub">за ${today.date}</div>
-      </div>
-      <div class="card danger">
-        <div class="card-label">Расход сегодня</div>
-        <div class="card-value">${rub(today.expenseToday)}</div>
-        <div class="card-sub">за ${today.date}</div>
-      </div>
+      ${cardLink('#/subscriptions', '', 'Подписки / мес', rub(subsMonthly), `${subs.filter(s => s.active).length} активных`)}
+      ${cardLink('#/accounts', 'accent', 'На картах', rub(accountsTotal), 'Все счета, с учётом операций')}
+      ${cardLink(`#/transactions?${todayQ}&type=income`, 'success', 'Доход сегодня', rub(today.incomeToday), `за ${today.date}`)}
+      ${cardLink(`#/transactions?${todayQ}&type=expense`, 'danger', 'Расход сегодня', rub(today.expenseToday), `за ${today.date}`)}
     </div>
 
     <div class="section-title">Последние операции</div>
@@ -88,7 +68,7 @@ export async function render(root) {
           <thead><tr><th>Дата</th><th>Тип</th><th class="num">Сумма</th><th>Комментарий</th></tr></thead>
           <tbody>
             ${tx.map(t => `
-              <tr>
+              <tr class="tx-row" data-tx-id="${t.id}" tabindex="0" role="button" aria-label="Редактировать операцию">
                 <td>${t.date}</td>
                 <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
                 <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
@@ -99,4 +79,21 @@ export async function render(root) {
         </table></div>`
     }
   `
+
+  // Клик по строке «Последние операции» открывает ту же модалку редактирования,
+  // что и в transactions.js. Подгружаем модалку динамически, чтобы не дублировать код.
+  const txRows = root.querySelectorAll('.tx-row')
+  if (txRows.length > 0) {
+    const { openTransactionForm } = await import('./transactions.js')
+    txRows.forEach(row => {
+      const open = () => {
+        const item = tx.find(t => t.id === row.dataset.txId)
+        if (item) openTransactionForm(root, accounts, catsList, item)
+      }
+      row.addEventListener('click', open)
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open() }
+      })
+    })
+  }
 }
