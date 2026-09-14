@@ -3,7 +3,14 @@
 import { api, rub, toast, todayIso } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { BANKS, bankLabel } from '../data/banks.js'
-import { CURRENCIES, currencyLabel } from '../data/currencies.js'
+import { CURRENCIES } from '../data/currencies.js'
+
+// Знак валюты по ISO-коду для рендера цен (₽, $, €, …). Для неизвестных кодов — пусто.
+const SYMBOL_BY_CODE = Object.fromEntries(CURRENCIES.map(c => [c.value, c.symbol || '']))
+const currencySign = code => SYMBOL_BY_CODE[code] || ''
+
+// Колонка «Валюта» показывает ISO-код (RUB, USD) вместо длинного названия.
+const currencyCode = code => code || '—'
 import { BROKERS, brokerLabel } from '../data/brokers.js'
 import { LOAN_TYPES, loanTypeLabel } from '../data/loanTypes.js'
 import { ASSET_TYPES, assetTypeLabel } from '../data/assetTypes.js'
@@ -39,6 +46,26 @@ const pctRender = v => {
   const sign = n > 0 ? '+' : (n < 0 ? '−' : '')
   const cls = n > 0 ? 'profit-pos' : (n < 0 ? 'profit-neg' : '')
   return `<span class="${cls}">${sign}${Math.abs(n).toFixed(2)}%</span>`
+}
+
+// Рендеры с символом валюты (для портфеля): принимают (value, row),
+// в row.currency — ISO-код валюты. Подпись currencySign(code) → '₽', '$', …
+const num4Cur = (v, r) => {
+  if (v == null) return '—'
+  const n = Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+  return `${n} ${currencySign(r?.currency)}`
+}
+const num2Cur = (v, r) => {
+  if (v == null) return '—'
+  const n = Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return `${n} ${currencySign(r?.currency)}`
+}
+const profitCur = (v, r) => {
+  if (v == null) return '—'
+  const n = Number(v)
+  const sign = n > 0 ? '+' : (n < 0 ? '−' : '')
+  const cls = n > 0 ? 'profit-pos' : (n < 0 ? 'profit-neg' : '')
+  return `<span class="${cls}">${sign}${Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currencySign(r?.currency)}</span>`
 }
 
 const CONFIGS = {
@@ -84,12 +111,12 @@ const CONFIGS = {
       { key: 'ticker', label: 'Тикер' },
       { key: 'name', label: 'Название' },
       { key: 'quantity', label: 'Кол-во', num: true },
-      { key: 'avgBuyPrice', label: 'Цена покупки', render: num4, num: true },
-      { key: 'currentPrice', label: 'Текущая', render: num4, num: true },
-      { key: 'currentValue', label: 'Стоимость', render: num2, num: true },
-      { key: 'profit', label: 'Прибыль', render: profitRender, num: true },
+      { key: 'avgBuyPrice', label: 'Цена покупки', render: num4Cur, num: true },
+      { key: 'currentPrice', label: 'Текущая', render: num4Cur, num: true },
+      { key: 'currentValue', label: 'Стоимость', render: num2Cur, num: true },
+      { key: 'profit', label: 'Прибыль', render: profitCur, num: true },
       { key: 'profitPct', label: '%', render: pctRender, num: true },
-      { key: 'currency', label: 'Валюта', render: currencyLabel }
+      { key: 'currency', label: 'Валюта', render: currencyCode }
     ],
     sumKey: 'currentValue',
     addFieldsAsync: async () => {
@@ -276,7 +303,9 @@ export function makeListView(endpoint) {
               <tr>
                 ${cfg.columns.map(c => {
                   const v = r[c.key]
-                  const rendered = c.render ? c.render(v) : (v ?? '')
+                  // render-функции получают (value, row) — старые игнорируют row,
+                  // новые (num4Cur/profitCur/…) читают row.currency для символа валюты.
+                  const rendered = c.render ? c.render(v, r) : (v ?? '')
                   return `<td class="${c.num ? 'num' : ''}">${rendered}</td>`
                 }).join('')}
                 <td>
