@@ -1,11 +1,19 @@
 import { api, rub } from '../api.js'
 
 export async function render(root) {
-  const [nw, subs, tx] = await Promise.all([
+  const [nw, subs, tx, accounts] = await Promise.all([
     api.get('/api/summary/net-worth'),
     api.get('/api/subscriptions'),
-    api.get('/api/transactions?limit=5')
+    api.get('/api/transactions?limit=5'),
+    api.get('/api/accounts')
   ])
+
+  // Итог по счетам — по реальному остатку (balance + операции после даты сверки),
+  // а не по зафиксированному balance. Фолбэк — accountsTotal из /summary (та же формула).
+  const accountsTotal = accounts.length > 0
+    ? accounts.filter(a => !a.archived).reduce(
+        (sum, a) => sum + (a.currentBalance !== undefined && a.currentBalance !== null ? a.currentBalance : a.balance), 0)
+    : nw.accountsTotal
 
   const subsMonthly = subs.filter(s => s.active).reduce((sum, s) => {
     if (s.period === 'monthly') return sum + s.amount
@@ -25,8 +33,8 @@ export async function render(root) {
       </div>
       <div class="card accent">
         <div class="card-label">На картах</div>
-        <div class="card-value">${rub(nw.accountsTotal)}</div>
-        <div class="card-sub">Все счета</div>
+        <div class="card-value">${rub(accountsTotal)}</div>
+        <div class="card-sub">Все счета, с учётом операций</div>
       </div>
       <div class="card">
         <div class="card-label">Вклады</div>

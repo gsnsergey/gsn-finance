@@ -1,5 +1,26 @@
 const BASE = '' // same origin
 
+// DD.MM.YYYY из ISO-даты (для сообщений пользователю).
+export function fmtDay(iso) {
+  const m = String(iso ?? '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso ?? '—')
+}
+
+// Человекочитаемое сообщение об ошибке. Отдельно — 409 retro_transaction:
+// это не «HTTP 409», а ситуация с двумя понятными способами разрешения.
+function errorMessage(data, status) {
+  if (data && data.error === 'retro_transaction') {
+    return `Счёт «${data.accountName}» сверен на ${fmtDay(data.balanceAsOf)}, `
+      + `а операция датирована ${fmtDay(data.date)} — этот период уже зафиксирован в остатке.\n`
+      + `Варианты: 1) сверить счёт заново (кнопка «Сверить» на экране «Счета»), если фактический остаток изменился; `
+      + `2) сдвинуть дату сверки раньше даты операции.`
+  }
+  if (data && data.error) {
+    return `${data.error}${data.field ? ':' + data.field : ''}${data.message ? ' — ' + data.message : ''}`
+  }
+  return `HTTP ${status}`
+}
+
 async function request(method, path, body) {
   const opts = { method, headers: { 'Content-Type': 'application/json' } }
   if (body !== undefined) opts.body = JSON.stringify(body)
@@ -8,8 +29,10 @@ async function request(method, path, body) {
   let data
   try { data = text ? JSON.parse(text) : null } catch { data = text }
   if (!res.ok) {
-    const msg = data && data.error ? `${data.error}${data.field ? ':' + data.field : ''}${data.message ? ' — ' + data.message : ''}` : `HTTP ${res.status}`
-    throw new Error(msg)
+    const err = new Error(errorMessage(data, res.status))
+    err.status = res.status
+    err.data = data
+    throw err
   }
   return data
 }

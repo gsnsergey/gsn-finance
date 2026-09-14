@@ -5,9 +5,15 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const dataDir = path.resolve(__dirname, '../../data')
-fs.mkdirSync(dataDir, { recursive: true })
 
-const dbPath = path.join(dataDir, 'finans.db')
+// Путь к БД переопределяется через FINANS_DB (нужно для тестов/verify.sh,
+// чтобы не трогать рабочий data/finans.db). Относительный путь — от cwd.
+const envDb = process.env.FINANS_DB
+const dbPath = envDb
+  ? (path.isAbsolute(envDb) ? envDb : path.resolve(process.cwd(), envDb))
+  : path.join(dataDir, 'finans.db')
+
+fs.mkdirSync(path.dirname(dbPath), { recursive: true })
 
 const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')

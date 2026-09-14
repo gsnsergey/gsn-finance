@@ -1,12 +1,17 @@
 import express from 'express'
 import { v4 as uuid } from 'uuid'
 import db from '../db.js'
+import { isFixed, isRetroFor, retroConflictBody, signedDelta, dayOf, isValidDay } from '../balance.js'
 
 const router = express.Router()
 
 function adjustAccountBalance(accountId, delta) {
   db.prepare('UPDATE accounts SET balance = balance + ?, updatedAt = ? WHERE id = ?')
     .run(delta, new Date().toISOString(), accountId)
+}
+
+function loadAccount(id) {
+  return db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
 }
 
 // LIST with filters: accountId, categoryId, type, from, to, q (comment search)
@@ -55,7 +60,17 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'invalid_amount' })
   }
 
-  const account = db.prepare('SELECT id FROM accounts WHERE id = ?').get(body.accountId)
+  // Дата нормализуется в календарный день ДО ретро-гейта и записи: гейт (dayOf)
+  // и SQL-формула currentBalance (date()) обязаны видеть одно и то же значение,
+  // иначе битая дата обходит 409 и молча выпадает из расчёта реального остатка.
+  // Дата-время клиента трактуется как день, который он записал (без пересчёта в UTC).
+  const day = dayOf(body.date)
+  if (!day || !isValidDay(day)) {
+    return res.status(400).json({ error: 'invalid_date', field: 'date', message: 'Дата в формате YYYY-MM-DD.' })
+  }
+  body.date = day
+
+  const account = loadAccount(body.accountId)
   if (!account) return res.status(400).json({ error: 'account_not_found' })
 
   if (body.categoryId) {
@@ -63,8 +78,19 @@ router.post('/', (req, res) => {
     if (!cat) return res.status(400).json({ error: 'category_not_found' })
   }
 
+  // Ретро-операция: дата внутри зафиксированного периода счёта (<= balanceAsOf).
+  // Такие операции не принимаются: зафиксированный остаток уже включает этот период,
+  // и операция посчиталась бы дважды.
+  if (isRetroFor(account, body.date)) {
+    return res.status(409).json(retroConflictBody(account, body.date))
+  }
+
   const id = body.id || uuid()
   const now = new Date().toISOString()
+  const delta = signedDelta(body.type, amount)
+  // У счёта с фиксацией balance не трогаем: он — снимок на дату balanceAsOf,
+  // реальный остаток считается как balance + движения строго после фиксации.
+  const adjust = !isFixed(account) && delta !== 0
 
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO transactions
@@ -84,9 +110,7 @@ router.post('/', (req, res) => {
         body.createdAt || now,
         now
       )
-    // обновляем баланс: expense уменьшает, income увеличивает, transfer — handled separately if needed
-    const delta = body.type === 'expense' ? -amount : (body.type === 'income' ? amount : 0)
-    if (delta !== 0) adjustAccountBalance(body.accountId, delta)
+    if (adjust) adjustAccountBalance(body.accountId, delta)
   })
   try {
     tx()
@@ -112,27 +136,58 @@ router.patch('/:id', (req, res) => {
     body.amount = a
   }
 
+  // Та же нормализация даты, что и в POST — но только если date реально передан:
+  // правка комментария без date проходит как раньше.
+  if (body.date !== undefined) {
+    const day = dayOf(body.date)
+    if (!day || !isValidDay(day)) {
+      return res.status(400).json({ error: 'invalid_date', field: 'date', message: 'Дата в формате YYYY-MM-DD.' })
+    }
+    body.date = day
+  }
+
   const patch = { updatedAt: new Date().toISOString() }
   const allowed = ['accountId', 'type', 'amount', 'currency', 'categoryId', 'date', 'comment', 'source', 'externalRef']
   for (const f of allowed) if (body[f] !== undefined) patch[f] = body[f]
 
-  const tx = db.transaction(() => {
-    // откатываем старое влияние на баланс
-    const oldDelta = existing.type === 'expense' ? -existing.amount : (existing.type === 'income' ? existing.amount : 0)
-    if (oldDelta !== 0) adjustAccountBalance(existing.accountId, -oldDelta)
+  const effective = { ...existing, ...patch }
 
-    if (Object.keys(patch).length > 0) {
-      const cols = Object.keys(patch)
-      const setClause = cols.map(c => `${c} = ?`).join(', ')
-      const values = cols.map(c => patch[c])
-      values.push(req.params.id)
-      db.prepare(`UPDATE transactions SET ${setClause} WHERE id = ?`).run(...values)
+  const oldAccount = loadAccount(existing.accountId)
+  const sameAccount = effective.accountId === existing.accountId
+  const newAccount = sameAccount ? oldAccount : loadAccount(effective.accountId)
+  if (!newAccount) return res.status(400).json({ error: 'account_not_found' })
+
+  // 409 только когда правка реально переносит операцию (дата/сумма/тип/счёт).
+  // UI при редактировании шлёт объект целиком, поэтому сравниваем значения,
+  // а не наличие полей: правка комментария у операции, уже лежащей в
+  // зафиксированном периоде, должна проходить.
+  const moves = ['accountId', 'type', 'amount', 'date'].some(f => {
+    if (body[f] === undefined) return false
+    if (f === 'amount') return Number(body[f]) !== Number(existing[f])
+    return body[f] !== existing[f]
+  })
+  if (moves && isRetroFor(newAccount, effective.date)) {
+    return res.status(409).json(retroConflictBody(newAccount, effective.date))
+  }
+
+  const tx = db.transaction(() => {
+    // откатываем старое влияние на баланс — только у счёта без фиксации
+    const oldDelta = signedDelta(existing.type, existing.amount)
+    if (oldDelta !== 0 && oldAccount && !isFixed(oldAccount)) {
+      adjustAccountBalance(existing.accountId, -oldDelta)
     }
 
-    // применяем новое
-    const updated = db.prepare('SELECT * FROM transactions WHERE id = ?').get(req.params.id)
-    const newDelta = updated.type === 'expense' ? -updated.amount : (updated.type === 'income' ? updated.amount : 0)
-    if (newDelta !== 0) adjustAccountBalance(updated.accountId, newDelta)
+    const cols = Object.keys(patch)
+    const setClause = cols.map(c => `${c} = ?`).join(', ')
+    const values = cols.map(c => patch[c])
+    values.push(req.params.id)
+    db.prepare(`UPDATE transactions SET ${setClause} WHERE id = ?`).run(...values)
+
+    // применяем новое — тоже только если целевой счёт без фиксации
+    const newDelta = signedDelta(effective.type, effective.amount)
+    if (newDelta !== 0 && !isFixed(newAccount)) {
+      adjustAccountBalance(effective.accountId, newDelta)
+    }
   })
 
   try {
@@ -149,9 +204,13 @@ router.delete('/:id', (req, res) => {
   const existing = db.prepare('SELECT * FROM transactions WHERE id = ?').get(req.params.id)
   if (!existing) return res.status(404).json({ error: 'not_found' })
 
+  const account = loadAccount(existing.accountId)
+
   const tx = db.transaction(() => {
-    const delta = existing.type === 'expense' ? -existing.amount : (existing.type === 'income' ? existing.amount : 0)
-    if (delta !== 0) adjustAccountBalance(existing.accountId, -delta)
+    const delta = signedDelta(existing.type, existing.amount)
+    if (delta !== 0 && account && !isFixed(account)) {
+      adjustAccountBalance(existing.accountId, -delta)
+    }
     db.prepare('DELETE FROM transactions WHERE id = ?').run(req.params.id)
   })
 

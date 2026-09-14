@@ -101,7 +101,7 @@ function openTransactionForm(root, accounts, categories, tx) {
   }
   const isEdit = !!tx
   const activeAccounts = accounts.filter(a => !a.archived)
-  const accountOptions = activeAccounts.map(a => ({ value: a.id, label: `${a.name} — ${rub(a.balance)}` }))
+  const accountOptions = activeAccounts.map(a => ({ value: a.id, label: `${a.name} — ${rub(a.currentBalance ?? a.balance)}` }))
 
   // Поля формы: type (toggle), amount, accountId, targetAccountId (только для transfer),
   // categoryId (только для expense/income), date, comment.
