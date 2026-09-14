@@ -152,9 +152,13 @@ html, body {
 .table tr:hover td { background: rgba(0,0,0,0.02); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* === P/L (portfolio) === */
+/* === P/L (portfolio) и любые отрицательные суммы ===
+   profit-pos — зелёный для прибыли (намеренно, не из скоупа).
+   profit-neg + amt-neg — оба красные, единый --danger для консистентности
+   (был отдельный #c1352f у profit-neg, теперь оба на --danger). */
 .profit-pos { color: #1a8754; font-variant-numeric: tabular-nums; }
-.profit-neg { color: #c1352f; font-variant-numeric: tabular-nums; }
+.profit-neg,
+.amt-neg { color: var(--danger); font-variant-numeric: tabular-nums; }
 
 /* === Buttons === */
 .btn {

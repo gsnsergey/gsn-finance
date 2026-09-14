@@ -47,8 +47,10 @@ export const api = {
 export function rub(kop) {
   if (kop === null || kop === undefined || isNaN(kop)) return '—'
   const n = Number(kop) / 100
-  const sign = n < 0 ? '-' : ''
-  return sign + Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
+  const str = (n < 0 ? '-' : '') +
+    Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
+  // Отрицательные суммы — красным (CSS-класс .amt-neg). Ноль и положительные — обычным цветом.
+  return n < 0 ? `<span class="amt-neg">${str}</span>` : str
 }
 
 export function toast(msg, kind = '') {
