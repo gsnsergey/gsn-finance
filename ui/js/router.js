@@ -39,7 +39,8 @@ async function render() {
     '/deposits': 'Вклады',
     '/portfolio': 'Портфель',
     '/loans': 'Кредиты',
-    '/subscriptions': 'Подписки и обязательства',
+    '/subscriptions': 'Подписки',
+    '/obligations': 'Обязательства',
     '/settings': 'Настройки'
   }
   titleEl.textContent = titleMap[path] || 'Finans'

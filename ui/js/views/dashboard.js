@@ -19,7 +19,7 @@ export async function render(root) {
   root.innerHTML = `
     <div class="cards">
       <div class="card ${nwClass}">
-        <div class="card-label">Net worth</div>
+        <div class="card-label">Капитал</div>
         <div class="card-value">${rub(nw.netWorth)}</div>
         <div class="card-sub">Активы − обязательства</div>
       </div>
@@ -57,7 +57,7 @@ export async function render(root) {
             ${tx.map(t => `
               <tr>
                 <td>${t.date}</td>
-                <td><span class="badge badge-${t.type}">${t.type}</span></td>
+                <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
                 <td class="num">${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
                 <td>${t.comment || ''}</td>
               </tr>

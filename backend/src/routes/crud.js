@@ -29,9 +29,10 @@ export const TABLE_CONFIGS = {
   },
   holdings: {
     table: 'holdings',
-    fields: ['broker', 'ticker', 'name', 'quantity', 'avgPrice', 'currency', 'accountId'],
+    fields: ['broker', 'type', 'ticker', 'name', 'quantity', 'avgPrice', 'currency', 'account', 'accountId'],
     required: ['broker', 'ticker', 'quantity', 'avgPrice'],
-    defaultOrder: 'broker ASC, ticker ASC'
+    enums: { type: ['stock', 'etf', 'fund', 'bond_ofz', 'bond_corp', 'eurobond', 'future', 'option', 'metal', 'crypto', 'other'] },
+    defaultOrder: 'broker ASC, account ASC, ticker ASC'
   },
   loans: {
     table: 'loans',

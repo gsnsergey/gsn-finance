@@ -1,0 +1,226 @@
+#!/usr/bin/env bash
+# gitx — удобные обёртки над git для проекта finans.
+# Использование: bin/gitx {status|add|commit|push|sync|log|help}
+# Все разрушающие операции (commit, push, sync) требуют подтверждения [y/N].
+
+set -e
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+
+require_repo() {
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    echo "✗ Текущая папка не git-репозиторий"
+    exit 1
+  fi
+}
+
+confirm() {
+  local msg="$1"
+  local ans
+  read -r -p "$msg [y/N] " ans
+  case "$ans" in
+    y|Y|yes|YES|д|Д) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+cmd_status() {
+  require_repo
+  echo "=== Branch ==="
+  git branch --show-current
+  echo ""
+  echo "=== Remote ==="
+  git remote -v | head -2
+  echo ""
+  echo "=== Status ==="
+  git status
+  echo ""
+  echo "=== Last 5 commits ==="
+  git log --oneline -5 2>/dev/null || echo "  (нет коммитов)"
+}
+
+cmd_add() {
+  require_repo
+  if [ $# -eq 0 ]; then
+    git add .
+  else
+    git add "$@"
+  fi
+  echo "✓ Добавлено в индекс"
+  echo ""
+  git status --short
+}
+
+cmd_commit() {
+  require_repo
+
+  if [ -z "$(git status --short)" ]; then
+    echo "○ Нет изменений для коммита"
+    exit 0
+  fi
+
+  if [ -z "$1" ]; then
+    echo "Использование: bin/gitx commit \"сообщение\""
+    echo "Текущие изменения:"
+    git status --short
+    exit 1
+  fi
+
+  echo "=== Будет закоммичено ==="
+  git status --short
+  echo ""
+  echo "Сообщение:"
+  echo "  $1"
+  echo ""
+  if ! confirm "Закоммитить?"; then
+    echo "○ Отменено"
+    exit 1
+  fi
+
+  git commit -m "$1"
+  echo ""
+  echo "✓ Закоммичено"
+  git log --oneline -1
+}
+
+cmd_push() {
+  require_repo
+
+  local branch
+  branch="$(git branch --show-current)"
+
+  echo "=== Push в origin/$branch ==="
+  if ! confirm "Отправить на GitHub?"; then
+    echo "○ Отменено"
+    exit 1
+  fi
+
+  # первый push с -u, последующие — без
+  if git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+    git push origin "$branch"
+  else
+    git push -u origin "$branch"
+  fi
+}
+
+cmd_log() {
+  require_repo
+  local n="${1:-10}"
+  git log --oneline -n "$n"
+}
+
+cmd_sync() {
+  require_repo
+
+  if [ -z "$(git status --short)" ]; then
+    echo "○ Нет изменений"
+    exit 0
+  fi
+
+  echo "=== Изменения ==="
+  git status --short
+  echo ""
+  echo "Sync: add + commit + push"
+  echo ""
+  if ! confirm "Продолжить?"; then
+    echo "○ Отменено"
+    exit 1
+  fi
+
+  git add .
+
+  local msg
+  msg="$(suggest_commit_message)"
+  echo ""
+  echo "Предлагаемое сообщение:"
+  echo "  $msg"
+  echo ""
+  if ! confirm "Закоммитить с этим сообщением?"; then
+    read -r -p "Введи своё сообщение: " msg
+    if [ -z "$msg" ]; then
+      echo "✗ Пустое сообщение"
+      exit 1
+    fi
+  fi
+
+  git commit -m "$msg"
+  echo ""
+
+  local branch
+  branch="$(git branch --show-current)"
+  if ! confirm "Push в origin/$branch?"; then
+    echo "○ Коммит сделан, push пропущен"
+    exit 0
+  fi
+
+  if git rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+    git push origin "$branch"
+  else
+    git push -u origin "$branch"
+  fi
+}
+
+suggest_commit_message() {
+  local first
+  first="$(git diff --name-only HEAD 2>/dev/null | head -1)"
+  if [ -z "$first" ]; then
+    echo "Update project files"
+    return
+  fi
+  case "$first" in
+    ui/js/views/*) echo "UI: update view" ;;
+    ui/js/data/*)  echo "UI: add reference data" ;;
+    ui/js/ui/*)    echo "UI: update components" ;;
+    ui/*)          echo "UI: update interface" ;;
+    backend/src/routes/*) echo "Backend: update API routes" ;;
+    backend/src/migrations/*) echo "Backend: add migration" ;;
+    backend/*)     echo "Backend: update server code" ;;
+    cli/*)         echo "CLI: update commands" ;;
+    bin/*)         echo "Scripts: update bin" ;;
+    PLAN.md)       echo "Docs: update plan" ;;
+    README.md)     echo "Docs: update readme" ;;
+    *.md)          echo "Docs: update docs" ;;
+    *)             echo "Update files" ;;
+  esac
+}
+
+cmd_help() {
+  cat <<'EOF'
+gitx — обёртка над git для finans.
+
+Команды:
+  status                    состояние (branch, remote, status, last commits)
+  add [files...]            добавить файлы (по умолчанию все)
+  commit "сообщение"        закоммитить staged (с подтверждением)
+  push                      отправить на GitHub (с подтверждением)
+  sync                      add + commit + push (с подтверждениями)
+  log [N]                   последние N коммитов (по умолчанию 10)
+  help                      эта справка
+
+Все разрушающие операции требуют подтверждения [y/N].
+
+Алиасы через npm:
+  npm run git:status
+  npm run git:add
+  npm run git:commit
+  npm run git:push
+  npm run git:sync
+  npm run git:log
+EOF
+}
+
+case "${1:-help}" in
+  status) shift; cmd_status "$@" ;;
+  add) shift; cmd_add "$@" ;;
+  commit) shift; cmd_commit "$@" ;;
+  push) shift; cmd_push "$@" ;;
+  sync) shift; cmd_sync "$@" ;;
+  log) shift; cmd_log "$@" ;;
+  help|-h|--help) cmd_help ;;
+  *)
+    echo "Неизвестная команда: $1"
+    cmd_help
+    exit 1
+    ;;
+esac

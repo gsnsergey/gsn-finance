@@ -17,7 +17,13 @@
     "serve:stop": "bin/ctl stop",
     "serve:restart": "bin/ctl restart",
     "serve:status": "bin/ctl status",
-    "serve:logs": "bin/ctl logs"
+    "serve:logs": "bin/ctl logs",
+    "git:status": "bin/gitx status",
+    "git:add": "bin/gitx add",
+    "git:commit": "bin/gitx commit",
+    "git:push": "bin/gitx push",
+    "git:sync": "bin/gitx sync",
+    "git:log": "bin/gitx log"
   },
   "engines": {
     "node": ">=20"

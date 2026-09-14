@@ -1,16 +1,17 @@
 const NAV = [
   { section: 'Главное' },
-  { path: '/dashboard', label: 'Дашборд', icon: '◉' },
-  { path: '/transactions', label: 'Операции', icon: '↔' },
+  { path: '/dashboard', label: 'Дашборд', icon: 'tachometer' },
+  { path: '/transactions', label: 'Операции', icon: 'exchange' },
   { section: 'Активы' },
-  { path: '/accounts', label: 'Счета и карты', icon: '▢' },
-  { path: '/deposits', label: 'Вклады', icon: '⌘' },
-  { path: '/portfolio', label: 'Портфель', icon: '◈' },
+  { path: '/accounts', label: 'Счета и карты', icon: 'credit-card' },
+  { path: '/deposits', label: 'Вклады', icon: 'bank' },
+  { path: '/portfolio', label: 'Портфель', icon: 'line-chart' },
   { section: 'Обязательства' },
-  { path: '/loans', label: 'Кредиты', icon: '⚠' },
-  { path: '/subscriptions', label: 'Подписки', icon: '↻' },
+  { path: '/loans', label: 'Кредиты', icon: 'warning' },
+  { path: '/subscriptions', label: 'Подписки', icon: 'refresh' },
+  { path: '/obligations', label: 'Обязательства', icon: 'handshake-o' },
   { section: 'Прочее' },
-  { path: '/settings', label: 'Настройки', icon: '⚙' }
+  { path: '/settings', label: 'Настройки', icon: 'cog' }
 ]
 
 export function renderSidebar() {
@@ -22,7 +23,7 @@ export function renderSidebar() {
       html += `<div class="nav-section">${item.section}</div>`
     } else {
       const active = item.path === path ? 'active' : ''
-      html += `<a href="#${item.path}" class="${active}"><span class="nav-icon">${item.icon}</span>${item.label}</a>`
+      html += `<a href="#${item.path}" class="${active}"><i class="fa fa-${item.icon} nav-icon"></i>${item.label}</a>`
     }
   }
   html += `</nav>`

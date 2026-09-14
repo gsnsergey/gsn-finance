@@ -48,9 +48,11 @@ cmd_start() {
     exit 1
   fi
 
-  if lsof -i ":$PORT" >/dev/null 2>&1; then
+  # Проверяем только LISTEN — иначе lsof видит закрытые fd от старых клиентов
+  # (CLOSED-соединения могут висеть в системе долго) и ложно считает порт занятым.
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     echo "✗ Порт $PORT занят другим процессом:"
-    lsof -i ":$PORT"
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN
     echo "  Останови его или задай FINANS_PORT=3738 ./bin/ctl start"
     exit 1
   fi

@@ -2,7 +2,24 @@
 
 import { api, rub, toast, todayIso } from '../api.js'
 import { openModal } from '../ui/modal.js'
-import { BANK_VALUES } from '../data/banks.js'
+import { BANKS, bankLabel } from '../data/banks.js'
+import { CURRENCIES, currencyLabel } from '../data/currencies.js'
+import { BROKERS, brokerLabel } from '../data/brokers.js'
+import { LOAN_TYPES, loanTypeLabel } from '../data/loanTypes.js'
+import { ASSET_TYPES, assetTypeLabel } from '../data/assetTypes.js'
+import { categoryIconHTML } from '../data/categoryIcons.js'
+import { brokerAccounts } from '../data/brokerAccounts.js'
+
+// Маппер код→русская подпись для периодов подписок и обязательств.
+// Используется и в колонках таблиц (render), и в опциях select-полей в формах.
+const PERIOD_LABELS = {
+  monthly: 'Ежемесячно',
+  quarterly: 'Ежеквартально',
+  yearly: 'Ежегодно',
+  weekly: 'Еженедельно',
+  daily: 'Ежедневно'
+}
+const periodLabel = v => PERIOD_LABELS[v] || v || '—'
 
 const COL_DATE = () => ({ render: v => v })
 
@@ -12,7 +29,7 @@ const CONFIGS = {
     addTitle: 'Новый вклад',
     columns: [
       { key: 'name', label: 'Название' },
-      { key: 'bank', label: 'Банк' },
+      { key: 'bank', label: 'Банк', render: bankLabel },
       { key: 'rate', label: 'Ставка, %', render: v => `${v}%` },
       { key: 'openedAt', label: 'Открыт', ...COL_DATE() },
       { key: 'capitalization', label: 'Капитализация', render: v => v ? 'да' : 'нет' },
@@ -20,7 +37,7 @@ const CONFIGS = {
     ],
     sumKey: 'currentBalance',
     addFields: () => [
-      { name: 'bank', label: 'Банк', type: 'text', required: true, placeholder: 'начни вводить или выбери из списка', suggestions: BANK_VALUES },
+      { name: 'bank', label: 'Банк', type: 'combobox', required: true, placeholder: 'начни вводить или выберите', options: BANKS },
       { name: 'name', label: 'Название', type: 'text', required: true, placeholder: 'Накопительный' },
       { name: 'principal', label: 'Начальная сумма (₽)', type: 'number', required: true, step: '0.01', kopecks: true },
       { name: 'rate', label: 'Годовая ставка, %', type: 'number', required: true, step: '0.01', placeholder: '8' },
@@ -43,27 +60,65 @@ const CONFIGS = {
     title: 'Портфель',
     addTitle: 'Новая позиция',
     columns: [
-      { key: 'broker', label: 'Брокер' },
+      { key: 'broker', label: 'Брокер', render: brokerLabel },
+      { key: 'account', label: 'Счёт/Пакет' },
+      { key: 'type', label: 'Тип', render: assetTypeLabel },
       { key: 'ticker', label: 'Тикер' },
       { key: 'name', label: 'Название' },
       { key: 'quantity', label: 'Кол-во', num: true },
       { key: 'avgPrice', label: 'Ср. цена', num: true },
-      { key: 'currency', label: 'Валюта' }
+      { key: 'currency', label: 'Валюта', render: currencyLabel }
     ],
     addFieldsAsync: async () => {
       const accounts = await api.get('/api/accounts')
+      // Список пакетов привязан к брокеру. Подгружаем из справочника, но пользователь
+      // может вписать своё — поле остаётся текстовым, а ниже в onMount подменим
+      // предложения (suggestions) на пакеты выбранного брокера.
+      const baseAccountSuggestions = brokerAccounts(null)
       return [
-        { name: 'broker', label: 'Брокер', type: 'text', required: true, placeholder: 'tinkoff' },
+        { name: 'broker', label: 'Брокер', type: 'combobox', required: true, placeholder: 'начни вводить или выберите', options: BROKERS },
+        {
+          name: 'account', label: 'Счёт/Пакет у брокера', type: 'text',
+          placeholder: 'например: ИИС, Основной, Премиум',
+          suggestions: baseAccountSuggestions,
+          brokerBound: true
+        },
+        {
+          name: 'type', label: 'Тип актива', type: 'select', required: true, value: 'stock',
+          options: ASSET_TYPES
+        },
         { name: 'ticker', label: 'Тикер', type: 'text', required: true, placeholder: 'SBER' },
         { name: 'name', label: 'Название (опционально)', type: 'text', placeholder: 'Сбербанк' },
+        // В портфеле количество и цена хранятся с точностью до 4 знаков — это
+        // стандартный шаг цены/лота у большинства брокеров (дробные акции, ETF).
         { name: 'quantity', label: 'Количество', type: 'number', required: true, step: '0.0001' },
-        { name: 'avgPrice', label: 'Средняя цена', type: 'number', required: true, step: '0.01' },
-        { name: 'currency', label: 'Валюта', type: 'text', value: 'RUB' },
+        { name: 'avgPrice', label: 'Средняя цена', type: 'number', required: true, step: '0.0001' },
+        { name: 'currency', label: 'Валюта', type: 'combobox', placeholder: 'RUB', options: CURRENCIES, value: 'RUB' },
         {
-          name: 'accountId', label: 'Счёт (опционально)', type: 'select',
+          name: 'accountId', label: 'Банковский счёт (опционально)', type: 'select',
           options: [{ value: '', label: '— не привязан —' }, ...accounts.map(a => ({ value: a.id, label: a.name }))]
         }
       ]
+    },
+    onMount: (dialog, ctx) => {
+      // Привязка «Счёт/Пакет у брокера» к выбранному брокеру: когда меняется broker,
+      // обновляем datalist с пакетами выбранного брокера. Пользователь может и вписать
+      // своё — поле остаётся свободным для ввода.
+      const brokerEl = dialog.querySelector('[name="broker"]')
+      const accountEl = dialog.querySelector('[name="account"]')
+      if (!brokerEl || !accountEl) return
+      const applyBroker = () => {
+        const id = accountEl.id || accountEl.getAttribute('list')?.replace(/^dl-/, '')
+        if (!id) return
+        const dl = dialog.querySelector(`#dl-${id}`)
+        if (!dl) return
+        const list = brokerAccounts(brokerEl.value)
+        dl.innerHTML = list.map(s => `<option value="${s.replace(/"/g, '&quot;')}">`).join('')
+      }
+      brokerEl.addEventListener('change', applyBroker)
+      // combobox скрытый input — слушаем его change
+      brokerEl.addEventListener('input', applyBroker)
+      applyBroker()
     }
   },
 
@@ -72,8 +127,8 @@ const CONFIGS = {
     addTitle: 'Новый кредит',
     columns: [
       { key: 'name', label: 'Название' },
-      { key: 'bank', label: 'Банк' },
-      { key: 'type', label: 'Тип' },
+      { key: 'bank', label: 'Банк', render: bankLabel },
+      { key: 'type', label: 'Тип', render: loanTypeLabel },
       { key: 'rate', label: 'Ставка, %', render: v => `${v}%` },
       { key: 'monthlyPayment', label: 'Платёж/мес', render: rub, num: true },
       { key: 'paymentDay', label: 'День' },
@@ -81,15 +136,11 @@ const CONFIGS = {
     ],
     sumKey: 'remainingAmount',
     addFields: () => [
-      { name: 'bank', label: 'Банк', type: 'text', required: true, placeholder: 'начни вводить или выбери из списка', suggestions: BANK_VALUES },
+      { name: 'bank', label: 'Банк', type: 'combobox', required: true, placeholder: 'начни вводить или выберите', options: BANKS },
       { name: 'name', label: 'Название', type: 'text', required: true, placeholder: 'Потреб' },
       {
         name: 'type', label: 'Тип', type: 'select', required: true,
-        options: [
-          { value: 'consumer', label: 'Потребительский' },
-          { value: 'mortgage', label: 'Ипотека' },
-          { value: 'credit_line', label: 'Кредитная линия' }
-        ]
+        options: LOAN_TYPES
       },
       { name: 'principal', label: 'Начальная сумма (₽)', type: 'number', required: true, step: '0.01', kopecks: true },
       { name: 'remainingAmount', label: 'Текущий остаток (₽)', type: 'number', required: true, step: '0.01', kopecks: true },
@@ -107,7 +158,7 @@ const CONFIGS = {
     columns: [
       { key: 'name', label: 'Название' },
       { key: 'amount', label: 'Сумма', render: rub, num: true },
-      { key: 'period', label: 'Период' },
+      { key: 'period', label: 'Период', render: periodLabel },
       { key: 'nextChargeDate', label: 'Следующий платёж', ...COL_DATE() },
       { key: 'active', label: 'Активна', render: v => v ? 'да' : 'нет' }
     ],
@@ -118,16 +169,21 @@ const CONFIGS = {
         { name: 'amount', label: 'Сумма (₽)', type: 'number', required: true, step: '0.01', kopecks: true },
         {
           name: 'period', label: 'Период', type: 'select', required: true,
-          options: [
-            { value: 'monthly', label: 'Ежемесячно' },
-            { value: 'yearly', label: 'Ежегодно' },
-            { value: 'weekly', label: 'Еженедельно' }
-          ]
+          options: Object.entries(PERIOD_LABELS)
+            .filter(([k]) => ['monthly', 'yearly', 'weekly'].includes(k))
+            .map(([value, label]) => ({ value, label }))
         },
         { name: 'nextChargeDate', label: 'Следующий платёж', type: 'date', required: true, value: todayIso() },
         {
-          name: 'categoryId', label: 'Категория (опционально)', type: 'select',
-          options: [{ value: '', label: '— нет —' }, ...cats.map(c => ({ value: c.id, label: `${c.icon || ''} ${c.name}`.trim() }))]
+          name: 'categoryId', label: 'Категория (опционально)', type: 'category-select',
+          options: [
+            { value: '', label: '— нет —', html: '— нет —' },
+            ...cats.map(c => ({
+              value: c.id,
+              label: c.name,
+              html: `${categoryIconHTML(c.icon)} ${escapeHtml(c.name)}`
+            }))
+          ]
         },
         { name: 'active', label: 'Активна', type: 'checkbox', value: true }
       ]
@@ -141,7 +197,7 @@ const CONFIGS = {
       { key: 'name', label: 'Название' },
       { key: 'recipient', label: 'Получатель' },
       { key: 'amount', label: 'Сумма', render: rub, num: true },
-      { key: 'period', label: 'Период' },
+      { key: 'period', label: 'Период', render: periodLabel },
       { key: 'nextDueDate', label: 'Следующий', ...COL_DATE() }
     ],
     addFields: () => [
@@ -150,11 +206,9 @@ const CONFIGS = {
       { name: 'amount', label: 'Сумма (₽)', type: 'number', required: true, step: '0.01', kopecks: true },
       {
         name: 'period', label: 'Период', type: 'select', required: true,
-        options: [
-          { value: 'monthly', label: 'Ежемесячно' },
-          { value: 'quarterly', label: 'Ежеквартально' },
-          { value: 'yearly', label: 'Ежегодно' }
-        ]
+        options: Object.entries(PERIOD_LABELS)
+          .filter(([k]) => ['monthly', 'quarterly', 'yearly'].includes(k))
+          .map(([value, label]) => ({ value, label }))
       },
       { name: 'nextDueDate', label: 'Следующий срок', type: 'date', required: true, value: todayIso() },
       { name: 'comment', label: 'Комментарий', type: 'textarea', placeholder: 'За что' }
@@ -163,7 +217,7 @@ const CONFIGS = {
 }
 
 export function makeListView(endpoint) {
-  return async function render(root) {
+  async function render(root) {
     const cfg = CONFIGS[endpoint]
     const rows = await api.get(`/api/${endpoint}`)
 
@@ -178,7 +232,7 @@ export function makeListView(endpoint) {
           Или через CLI:<br>
           <code>${getCliHint(endpoint)}</code>
         </div>`
-      wireAddButton(root, cfg, endpoint)
+      wireFormButton(root, cfg, endpoint, null, render)
       return
     }
 
@@ -191,7 +245,7 @@ export function makeListView(endpoint) {
         <table class="table">
           <thead><tr>
             ${cfg.columns.map(c => `<th class="${c.num ? 'num' : ''}">${c.label}</th>`).join('')}
-            <th></th>
+            <th style="width:80px"></th>
           </tr></thead>
           <tbody>
             ${rows.map(r => `
@@ -201,7 +255,10 @@ export function makeListView(endpoint) {
                   const rendered = c.render ? c.render(v) : (v ?? '')
                   return `<td class="${c.num ? 'num' : ''}">${rendered}</td>`
                 }).join('')}
-                <td><button class="btn btn-sm btn-danger" data-action="delete" data-id="${r.id}">×</button></td>
+                <td>
+                  <button class="btn btn-sm" data-action="edit" data-id="${r.id}" title="Редактировать">✎</button>
+                  <button class="btn btn-sm btn-danger" data-action="delete" data-id="${r.id}" title="Удалить">×</button>
+                </td>
               </tr>
             `).join('')}
             ${total !== null ? `<tr style="font-weight:600;background:rgba(0,0,0,0.02)">
@@ -214,7 +271,14 @@ export function makeListView(endpoint) {
       </div>
     `
 
-    wireAddButton(root, cfg, endpoint)
+    wireFormButton(root, cfg, endpoint, null, render)
+
+    root.querySelectorAll('[data-action="edit"]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const record = rows.find(r => r.id === btn.dataset.id)
+        if (record) wireFormButton(root, cfg, endpoint, record, render)
+      })
+    })
 
     root.querySelectorAll('[data-action="delete"]').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -227,45 +291,91 @@ export function makeListView(endpoint) {
       })
     })
   }
+  return render
 }
 
-function wireAddButton(root, cfg, endpoint) {
+// Кнопка «+ Добавить» (record=null) или «Редактировать» (record=...)
+function wireFormButton(root, cfg, endpoint, record, render) {
+  const isEdit = !!record
   const btn = document.getElementById('add-btn')
-  if (!btn) return
-  btn.addEventListener('click', async () => {
-    let fields
-    try {
-      fields = cfg.addFieldsAsync ? await cfg.addFieldsAsync() : cfg.addFields()
-    } catch (e) {
-      toast('Не удалось подготовить форму: ' + e.message, 'error')
-      return
-    }
-    openModal({
-      title: cfg.addTitle || 'Добавить запись',
-      fields,
-      onSubmit: async (data) => {
-        // очистка пустых полей
-        const body = {}
-        for (const [k, v] of Object.entries(data)) {
-          if (v === '' || v === null) continue
-          // конвертация рублей в копейки для помеченных полей
-          const f = fields.find(x => x.name === k)
-          if (f && f.kopecks) {
-            body[k] = Math.round(Number(v) * 100)
-          } else if (f && f.type === 'checkbox') {
-            body[k] = v ? 1 : 0
-          } else if (f && f.type === 'number') {
-            body[k] = f.integer ? Math.round(Number(v)) : Number(v)
-          } else {
-            body[k] = v
-          }
-        }
-        await api.post(`/api/${endpoint}`, body)
-        toast('Добавлено', 'success')
-        render(root)
-      }
+
+  // Если вызвали напрямую из edit-handler (без кнопки), btn может отсутствовать
+  if (!isEdit && !btn) return
+  if (isEdit) {
+    // открываем форму сразу
+    openForm(root, cfg, endpoint, record, render)
+    return
+  }
+  btn.addEventListener('click', () => openForm(root, cfg, endpoint, null, render))
+}
+
+async function openForm(root, cfg, endpoint, record, render) {
+  let fields
+  try {
+    fields = cfg.addFieldsAsync ? await cfg.addFieldsAsync() : cfg.addFields()
+  } catch (e) {
+    toast('Не удалось подготовить форму: ' + e.message, 'error')
+    return
+  }
+
+  // Подставляем текущие значения записи
+  if (record) {
+    fields = fields.map(f => {
+      const v = record[f.name]
+      if (v === undefined || v === null) return f
+      // копейки → рубли (форма работает в рублях)
+      if (f.kopecks) return { ...f, value: Number(v) / 100 }
+      return { ...f, value: v }
     })
+  }
+
+  openModal({
+    title: isEditStr(record, cfg),
+    submitLabel: record ? 'Сохранить' : 'Создать',
+    fields,
+    onMount: typeof cfg.onMount === 'function'
+      ? (dialog) => cfg.onMount(dialog, { fields, record })
+      : undefined,
+    onSubmit: async (data) => {
+      const body = {}
+      for (const [k, v] of Object.entries(data)) {
+        if (v === '' || v === null) continue
+        const f = fields.find(x => x.name === k)
+        if (f && f.kopecks) {
+          body[k] = Math.round(Number(v) * 100)
+        } else if (f && f.type === 'checkbox') {
+          body[k] = v ? 1 : 0
+        } else if (f && f.type === 'number') {
+          body[k] = f.integer ? Math.round(Number(v)) : Number(v)
+        } else {
+          body[k] = v
+        }
+      }
+      // Дефолты для опциональных полей
+      if (endpoint === 'deposits' && body.currentBalance === undefined && body.principal !== undefined) {
+        body.currentBalance = body.principal
+      }
+      try {
+        if (record) {
+          await api.patch(`/api/${endpoint}/${record.id}`, body)
+          toast('Сохранено', 'success')
+        } else {
+          await api.post(`/api/${endpoint}`, body)
+          toast('Добавлено', 'success')
+        }
+        render(root)
+      } catch (e) {
+        throw e
+      }
+    }
   })
+}
+
+function isEditStr(record, cfg) {
+  if (!record) return cfg.addTitle || 'Добавить запись'
+  // Убираем слово "Новый" из addTitle, получаем "Редактировать ..."
+  const title = cfg.addTitle || 'Запись'
+  return title.replace(/^Нов(ый|ая|ое)\s+/i, 'Редактировать ')
 }
 
 function getCliHint(endpoint) {
@@ -277,4 +387,8 @@ function getCliHint(endpoint) {
     obligations: 'fin agent add-obligation --name "Аренда" --amount 30000 --period monthly --next 2026-10-05'
   }
   return hints[endpoint] || ''
+}
+
+function escapeHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
 }

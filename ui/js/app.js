@@ -12,8 +12,8 @@ register('/deposits', makeListView('deposits'))
 register('/portfolio', makeListView('holdings'))
 register('/loans', makeListView('loans'))
 register('/subscriptions', makeListView('subscriptions'))
+register('/obligations', makeListView('obligations'))
 
-// /subscriptions — список подписок + обязательств (позже разделим)
 import { render as settings } from './views/settings.js'
 register('/settings', settings)
 

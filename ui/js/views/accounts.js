@@ -1,7 +1,7 @@
 import { api, rub, toast } from '../api.js'
 import { openModal } from '../ui/modal.js'
-import { BANK_VALUES, bankLabel } from '../data/banks.js'
-import { CURRENCY_VALUES, currencyLabel } from '../data/currencies.js'
+import { BANKS, bankLabel } from '../data/banks.js'
+import { CURRENCIES, currencyLabel } from '../data/currencies.js'
 import { ACCOUNT_TYPES, accountTypeLabel } from '../data/accountTypes.js'
 
 export async function render(root) {
@@ -85,9 +85,9 @@ function openAccountForm(root, account) {
         name: 'type', label: 'Тип', type: 'select', required: true, value: account?.type,
         options: ACCOUNT_TYPES
       },
-      { name: 'bank', label: 'Банк', type: 'text', placeholder: 'начни вводить или выбери из списка', suggestions: BANK_VALUES, value: account?.bank },
+      { name: 'bank', label: 'Банк', type: 'combobox', placeholder: 'начни вводить или выберите', options: BANKS, value: account?.bank },
       { name: 'balance', label: isEdit ? 'Текущий баланс (₽)' : 'Начальный баланс (₽)', type: 'number', placeholder: '0', step: '0.01', value: account?.balance != null ? account.balance / 100 : 0, kopecks: true },
-      { name: 'currency', label: 'Валюта', type: 'text', placeholder: 'RUB', suggestions: CURRENCY_VALUES, value: account?.currency || 'RUB' },
+      { name: 'currency', label: 'Валюта', type: 'combobox', placeholder: 'RUB', options: CURRENCIES, value: account?.currency || 'RUB' },
       { name: 'color', label: 'Цвет', type: 'color', value: account?.color }
     ],
     onSubmit: async (data) => {

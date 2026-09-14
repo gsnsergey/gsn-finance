@@ -32,6 +32,23 @@ function renderField(f) {
     </select>`
   } else if (f.type === 'textarea') {
     input = `<textarea name="${f.name}" id="${id}" ${required} placeholder="${escapeAttr(f.placeholder || '')}">${escapeHtml(value)}</textarea>`
+  } else if (f.type === 'toggle') {
+    // Сегментированный переключатель (radio-like): 2-3 варианта в одной строке.
+    // Скрытое поле [type=hidden] хранит выбранное значение — name такое же,
+    // как у обычного input, поэтому onSubmit подхватывает без правок.
+    const groupName = f.name
+    const opts = f.options || []
+    const segs = opts.map((o, i) => {
+      const ov = String(o.value)
+      const sel = String(value) === ov
+      const segId = `${id}-${i}`
+      return `<input type="radio" class="toggle-segment" name="${groupName}-seg" id="${segId}" value="${escapeAttr(o.value)}" ${sel ? 'checked' : ''} data-toggle-option>
+        <label for="${segId}" class="toggle-label">${escapeHtml(o.label)}</label>`
+    }).join('')
+    input = `<div class="toggle-group" data-toggle-group>
+      ${segs}
+      <input type="hidden" name="${f.name}" id="${id}" value="${escapeAttr(value)}" data-toggle-value>
+    </div>`
   } else if (f.type === 'checkbox') {
     input = `<input type="checkbox" name="${f.name}" id="${id}" ${value ? 'checked' : ''}>`
   } else if (f.type === 'color') {
@@ -47,13 +64,53 @@ function renderField(f) {
         <input type="text" data-color-hex placeholder="#000000" value="${escapeAttr(initColor)}" pattern="^#[0-9a-fA-F]{6}$" maxlength="7" class="color-hex">
       </div>
     </div>`
+  } else if (f.type === 'category-select') {
+    // Кастомный dropdown для категорий: HTML-метки (FA-иконки / эмодзи),
+    // потому что нативный <select> рендерит только текст и FA-классы не видны.
+    const options = f.options || []
+    const matched = options.find(o => String(o.value) === String(value))
+    const display = matched ? (matched.html || escapeHtml(matched.label || '')) : escapeHtml(f.placeholder || 'Выберите…')
+    const emptyCls = matched ? '' : 'is-empty'
+    input = `<div class="category-select" data-category-select>
+      <button type="button" class="category-select-trigger ${emptyCls}" data-category-select-trigger aria-haspopup="listbox">
+        <span class="category-select-display" data-category-select-display>${display}</span>
+        <span class="category-select-caret" aria-hidden="true">▾</span>
+      </button>
+      <input type="hidden" name="${f.name}" id="${id}" value="${escapeAttr(value)}" data-category-select-value>
+      <div class="category-select-dropdown" data-category-select-dropdown role="listbox" hidden>
+        ${options.map(o => {
+          const sel = String(o.value) === String(value) ? 'is-selected' : ''
+          const html = o.html != null ? o.html : escapeHtml(o.label || '')
+          return `<div class="category-select-option ${sel}" role="option" data-value="${escapeAttr(o.value)}" data-html="${escapeAttr(o.html != null ? o.html : '')}">${html}</div>`
+        }).join('')}
+      </div>
+    </div>`
+  } else if (f.type === 'combobox') {
+    const options = f.options || []
+    const matched = options.find(o => o.value === value)
+    const initLabel = matched ? matched.label : (value || '')
+    input = `<div class="combobox" data-combobox>
+      <input type="text" class="combobox-input" id="${id}" placeholder="${escapeAttr(f.placeholder || '')}" value="${escapeAttr(initLabel)}" ${required} autocomplete="off" data-combobox-input>
+      <input type="hidden" name="${f.name}" value="${escapeAttr(value)}" data-combobox-value>
+      <div class="combobox-dropdown" data-combobox-dropdown hidden>
+        ${options.length === 0
+          ? '<div class="combobox-empty">Нет вариантов</div>'
+          : options.map(o => `<div class="combobox-option" data-value="${escapeAttr(o.value)}">${escapeHtml(o.label)}</div>`).join('')
+        }
+      </div>
+    </div>`
   } else {
-    const type = f.type || 'text'
+    // Для чисел используем text + inputmode="decimal": type="number" в ряде локалей
+    // (ru-RU) не принимает запятую как десятичный разделитель, поэтому пользователь
+    // не может ввести "1,5". parseNumber ниже сам приведёт запятую к точке.
+    const isNumber = f.type === 'number'
+    const htmlType = isNumber ? 'text' : (f.type || 'text')
+    const inputmodeAttr = isNumber ? 'inputmode="decimal"' : ''
     const listAttr = (f.suggestions && f.suggestions.length > 0) ? `list="dl-${id}"` : ''
     const datalist = (f.suggestions && f.suggestions.length > 0)
       ? `<datalist id="dl-${id}">${f.suggestions.map(s => `<option value="${escapeAttr(s)}">`).join('')}</datalist>`
       : ''
-    input = `<input type="${type}" name="${f.name}" id="${id}" ${required} ${listAttr} placeholder="${escapeAttr(f.placeholder || '')}" value="${escapeAttr(value)}" ${f.step ? `step="${escapeAttr(f.step)}"` : ''} ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} autocomplete="off">${datalist}`
+    input = `<input type="${htmlType}" name="${f.name}" id="${id}" ${inputmodeAttr} ${required} ${listAttr} placeholder="${escapeAttr(f.placeholder || '')}" value="${escapeAttr(value)}" ${f.step ? `step="${escapeAttr(f.step)}"` : ''} ${f.min !== undefined ? `min="${f.min}"` : ''} ${f.max !== undefined ? `max="${f.max}"` : ''} autocomplete="off">${datalist}`
   }
 
   return `<div class="form-field ${f.type === 'color' ? 'form-field-color' : ''}">
@@ -107,7 +164,7 @@ function clearError(form) {
   if (err) err.remove()
 }
 
-export function openModal({ title, fields, submitLabel = 'Сохранить', onSubmit }) {
+export function openModal({ title, fields, submitLabel = 'Сохранить', onSubmit, onMount }) {
   const backdrop = document.createElement('div')
   backdrop.className = 'modal-backdrop'
 
@@ -130,14 +187,41 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
   const form = dialog.querySelector('form')
   const close = () => backdrop.remove()
 
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) close() })
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) tryClose() })
 
   const escHandler = e => {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', escHandler) }
+    if (e.key === 'Escape') { tryClose(); document.removeEventListener('keydown', escHandler) }
   }
   document.addEventListener('keydown', escHandler)
 
-  form.querySelector('[data-action="cancel"]').addEventListener('click', close)
+  form.querySelector('[data-action="cancel"]').addEventListener('click', () => tryClose())
+
+  // Кастомная разметка после монтирования (например, пикер иконок)
+  if (typeof onMount === 'function') {
+    try { onMount(dialog) } catch (e) { console.error('onMount error:', e) }
+  }
+
+  // Снимок состояния формы сразу после onMount, чтобы корректно отслеживать
+  // «грязность»: если пользователь ничего не менял, закрытие должно быть тихим;
+  // если менял — спрашиваем перед закрытием по backdrop/Esc/«Отмена».
+  const snapshotForm = () => {
+    const data = {}
+    for (const f of fields) {
+      const el = form.querySelector(`[name="${f.name}"]`)
+      if (!el) continue
+      if (f.type === 'checkbox') data[f.name] = el.checked
+      else data[f.name] = el.value
+    }
+    return JSON.stringify(data)
+  }
+  const initialSnapshot = snapshotForm()
+  const tryClose = () => {
+    const cur = snapshotForm()
+    if (cur !== initialSnapshot) {
+      if (!confirm('В форме есть несохранённые изменения. Закрыть без сохранения?')) return
+    }
+    close()
+  }
 
   setTimeout(() => {
     const first = form.querySelector('input:not([type=checkbox]), select, textarea')
@@ -168,9 +252,152 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
     })
   })
 
+  // Category-select — кастомный dropdown с HTML-метками (FA-иконки)
+  dialog.querySelectorAll('[data-category-select]').forEach(cs => {
+    const trigger = cs.querySelector('[data-category-select-trigger]')
+    const display = cs.querySelector('[data-category-select-display]')
+    const hidden = cs.querySelector('[data-category-select-value]')
+    const dropdown = cs.querySelector('[data-category-select-dropdown]')
+    const options = Array.from(cs.querySelectorAll('.category-select-option'))
+
+    function close() {
+      dropdown.hidden = true
+      trigger.setAttribute('aria-expanded', 'false')
+    }
+    function open() {
+      // закрыть другие открытые category-select в этом диалоге
+      dialog.querySelectorAll('[data-category-select-dropdown]:not([hidden])').forEach(d => {
+        if (d !== dropdown) d.hidden = true
+      })
+      dropdown.hidden = false
+      trigger.setAttribute('aria-expanded', 'true')
+    }
+
+    trigger.addEventListener('click', e => {
+      e.stopPropagation()
+      if (dropdown.hidden) open(); else close()
+    })
+
+    options.forEach(opt => {
+      opt.addEventListener('click', e => {
+        e.stopPropagation()
+        hidden.value = opt.dataset.value
+        const html = opt.dataset.html || opt.textContent
+        display.innerHTML = html
+        display.classList.remove('is-empty')
+        trigger.classList.remove('is-empty')
+        options.forEach(o => o.classList.toggle('is-selected', o === opt))
+        close()
+      })
+    })
+
+    // Закрытие по клику вне / Escape
+    const onDocClick = e => { if (!cs.contains(e.target)) close() }
+    setTimeout(() => document.addEventListener('click', onDocClick), 0)
+    const onKey = e => { if (e.key === 'Escape') close() }
+    document.addEventListener('keydown', onKey)
+    // Чистим слушатели при закрытии модалки
+    const observer = new MutationObserver(() => {
+      if (!document.body.contains(cs)) {
+        document.removeEventListener('click', onDocClick)
+        document.removeEventListener('keydown', onKey)
+        observer.disconnect()
+      }
+    })
+    observer.observe(document.body, { childList: true, subtree: true })
+  })
+
+  // Toggle-группы (сегментированный переключатель): клик по радио синхронизирует hidden
+  dialog.querySelectorAll('[data-toggle-group]').forEach(group => {
+    const hidden = group.querySelector('[data-toggle-value]')
+    group.querySelectorAll('[data-toggle-option]').forEach(opt => {
+      opt.addEventListener('change', () => {
+        if (opt.checked) {
+          hidden.value = opt.value
+          // дёрнем change на hidden, чтобы внешние слушатели (например, для смены полей формы) среагировали
+          hidden.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+      })
+    })
+  })
+
+  // Comboboxes — поиск по label/value, выбор заполняет hidden
+  dialog.querySelectorAll('[data-combobox]').forEach(cb => {
+    const input = cb.querySelector('[data-combobox-input]')
+    const hidden = cb.querySelector('[data-combobox-value]')
+    const dropdown = cb.querySelector('[data-combobox-dropdown]')
+    const options = Array.from(cb.querySelectorAll('.combobox-option'))
+    let activeIdx = -1
+
+    function showAll() {
+      options.forEach(o => o.hidden = false)
+      dropdown.hidden = false
+      activeIdx = -1
+      updateActive()
+    }
+    function filter(q) {
+      const s = q.toLowerCase()
+      let visible = 0
+      options.forEach(o => {
+        const match = o.textContent.toLowerCase().includes(s) || o.dataset.value.toLowerCase().includes(s)
+        o.hidden = !match
+        if (match) visible++
+      })
+      dropdown.hidden = visible === 0
+      activeIdx = -1
+      updateActive()
+    }
+    function select(opt) {
+      input.value = opt.textContent
+      hidden.value = opt.dataset.value
+      dropdown.hidden = true
+    }
+    function updateActive() {
+      options.forEach((o, i) => o.classList.toggle('active', i === activeIdx))
+    }
+
+    // Показываем список только когда пользователь начал вводить — не при фокусе.
+    // Фокус (например, при автофокусе первой формы) не открывает дропдаун,
+    // это раздражает: открываешь форму — а тебе сразу предлагают выбор.
+    input.addEventListener('input', () => { filter(input.value); hidden.value = '' })
+    input.addEventListener('blur', () => setTimeout(() => { dropdown.hidden = true }, 200))
+    input.addEventListener('keydown', e => {
+      const visible = options.filter(o => !o.hidden)
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        activeIdx = Math.min(activeIdx + 1, visible.length - 1)
+        updateActive()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        activeIdx = Math.max(activeIdx - 1, 0)
+        updateActive()
+      } else if (e.key === 'Enter' && activeIdx >= 0) {
+        e.preventDefault()
+        select(visible[activeIdx])
+      } else if (e.key === 'Escape') {
+        dropdown.hidden = true
+      }
+    })
+    options.forEach(opt => {
+      opt.addEventListener('mousedown', e => {
+        e.preventDefault() // чтобы blur input не сработал раньше
+        select(opt)
+      })
+    })
+  })
+
   form.addEventListener('submit', async e => {
     e.preventDefault()
     clearError(form)
+    // Синхронизировать combobox: если пользователь ввёл текст, но не выбрал из списка,
+    // отправим введённое значение как есть (свободный ввод)
+    dialog.querySelectorAll('[data-combobox]').forEach(cb => {
+      const hidden = cb.querySelector('[data-combobox-value]')
+      const input = cb.querySelector('[data-combobox-input]')
+      if (hidden && input && !hidden.value && input.value) {
+        hidden.value = input.value
+      }
+    })
     const data = {}
     const missing = []
     for (const f of fields) {
