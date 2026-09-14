@@ -116,8 +116,10 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  overflow: auto;
   box-shadow: var(--shadow);
+  /* Скроллим только таблицу; страница неподвижна. */
+  max-height: calc(100vh - 220px);
 }
 .table {
   width: 100%;
@@ -134,6 +136,10 @@ html, body {
   color: var(--muted);
   font-weight: 600;
   background: rgba(0,0,0,0.02);
+  /* Шапка прилипает к верху при прокрутке таблицы */
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .table tr:last-child td { border-bottom: none; }
 .table tr:hover td { background: rgba(0,0,0,0.02); }
