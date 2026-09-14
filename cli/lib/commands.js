@@ -199,3 +199,41 @@ commands['list-categories'] = async () => {
   console.log('Income categories:')
   for (const c of inc) console.log(`  ${c.icon || '·'} ${c.name}`)
 }
+
+// ===== T-INVEST IMPORT =====
+
+// Подкоманда t-invest pull [--dry-run]
+// Внутри команды разбираем подкоманду через argv[2] (см. cli/bin/fin.js: main(argv.slice(2))).
+commands['t-invest'] = async (f) => {
+  // Второй позиционный аргумент (subcommand) пробрасывается через flags._
+  const sub = (f._ && f._[0]) || 'pull'
+  if (sub !== 'pull') {
+    throw new Error(`Unknown t-invest subcommand: "${sub}". Доступно: pull`)
+  }
+
+  const dryRun = !!(f.bool && f.bool['dry-run'])
+  console.log(`→ Импорт портфеля из Т-Инвестиций${dryRun ? ' (DRY-RUN, без записи)' : ''}...`)
+
+  const result = await api.post('/api/holdings/import/tinvest', { dryRun })
+  const { summary } = result
+
+  console.log('')
+  console.log(`Счетов просканировано: ${summary.accountsScanned}`)
+  for (const a of summary.accounts) {
+    const line = `  • ${a.name} (${a.id})${a.error ? '  ✗ ' + a.error : `  +${a.created} новых, ~${a.updated} обновлено, ${a.skipped} пропущено`}`
+    console.log(line)
+    if (a.positions && a.positions.length > 0) {
+      for (const p of a.positions) {
+        console.log(`      ${p.action === 'created' ? '+' : '~'} ${String(p.ticker).padEnd(10)} qty=${p.qty}`)
+      }
+    }
+  }
+  console.log('')
+  console.log(`Итого: +${summary.created} новых, ~${summary.updated} обновлено, ${summary.skipped} пропущено`)
+  if (summary.errors && summary.errors.length > 0) {
+    console.log(`Ошибки (${summary.errors.length}):`)
+    for (const e of summary.errors.slice(0, 10)) console.log(`  ! ${JSON.stringify(e)}`)
+    if (summary.errors.length > 10) console.log(`  ... и ещё ${summary.errors.length - 10}`)
+  }
+  ok(dryRun ? 'DRY-RUN завершён' : 'Импорт завершён')
+}

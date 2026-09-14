@@ -60,9 +60,18 @@ cmd_start() {
   ensure_deps
   ensure_db
 
+  # TLS: gRPC-клиент (@grpc/grpc-js) не знает про российские корневые CA
+  # (Russian Trusted Root CA от Минцифры). Если файл есть — пробрасываем
+  # его в процесс, чтобы SDK tinkoff-invest-api мог ходить в invest-public-api.tinkoff.ru.
+  local ca_file="$ROOT/data/russian-trusted-root-ca.pem"
+  local ca_arg=()
+  if [ -f "$ca_file" ]; then
+    ca_arg=("GRPC_DEFAULT_SSL_ROOTS_FILE_PATH=$ca_file")
+  fi
+
   echo "→ Запуск сервера..."
   : > "$LOG_FILE"
-  PORT="$PORT" nohup node backend/src/server.js >> "$LOG_FILE" 2>&1 &
+  env PORT="$PORT" "${ca_arg[@]}" nohup node backend/src/server.js >> "$LOG_FILE" 2>&1 &
   echo $! > "$PID_FILE"
   disown || true
 

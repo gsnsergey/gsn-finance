@@ -2,6 +2,7 @@ import express from 'express'
 import db from '../db.js'
 import { createCrudRouter, TABLE_CONFIGS } from './crud.js'
 import transactionsRouter from './transactions.js'
+import tInvestRouter from './tinvest.js'
 
 const router = express.Router()
 
@@ -12,6 +13,9 @@ for (const name of Object.keys(TABLE_CONFIGS)) {
 
 // transactions — отдельный (фильтры + обновление баланса)
 router.use('/transactions', transactionsRouter)
+
+// Импорт портфеля из Т-Инвестиций (разовая команда, требует TINKOFF_INVEST_TOKEN в data/.env)
+router.use('/holdings/import/tinvest', tInvestRouter)
 
 // Сводный эндпоинт для дашборда (используется UI и CLI)
 router.get('/summary/net-worth', (req, res) => {

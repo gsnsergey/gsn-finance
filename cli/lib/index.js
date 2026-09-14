@@ -30,6 +30,8 @@ Finans CLI — управление личными финансами через
   list-subscriptions
   add-obligation --name "Аренда" --amount 30000 --period monthly --next 2026-10-05
 
+  t-invest pull [--dry-run]            импорт портфеля из Т-Инвестиций (нужен TINKOFF_INVEST_TOKEN в data/.env)
+
   net-worth                           сводка по активам/обязательствам
 
 Суммы везде указываются в рублях (например, --amount 1500 = 1500.00 ₽).
