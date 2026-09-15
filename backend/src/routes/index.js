@@ -7,6 +7,7 @@ import transactionsRouter from './transactions.js'
 import tInvestRouter from './tinvest.js'
 import brokerCredentialsRouter from './broker_credentials.js'
 import bcsRouter from './bcs.js'
+import importRouter from './import.js'
 import { CURRENT_BALANCE_EXPR, todayIso } from '../balance.js'
 
 const router = express.Router()
@@ -144,6 +145,11 @@ router.use('/holdings/import/bcs', bcsRouter)
 
 // CRUD API-токенов брокеров (Т-Инвестиции, БКС, ...)
 router.use('/broker-credentials', brokerCredentialsRouter)
+
+// Импорт банковских выписок (Альфа): preview без записи + import с дедупом.
+// Маршруты: /api/import/alfa/preview и /api/transactions/import.
+router.use('/import', importRouter)
+router.use('/transactions/import', importRouter)
 
 // Сводный эндпоинт для дашборда (используется UI и CLI)
 router.get('/summary/net-worth', (req, res) => {

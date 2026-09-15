@@ -66,6 +66,16 @@ export const TABLE_CONFIGS = {
     required: ['name', 'amount', 'period', 'nextDueDate'],
     enums: { period: ['monthly', 'quarterly', 'yearly'] },
     defaultOrder: 'nextDueDate ASC'
+  },
+  // Правила маппинга для импорта банковских выписок (Альфа).
+  // accountId: NULL — правило глобальное (любой счёт), иначе — счёт-специфичное.
+  // matchType: см. CHECK в миграции 013. priority ASC: меньше число — раньше применяется.
+  import_rules: {
+    table: 'import_rules',
+    fields: ['accountId', 'matchType', 'matchValue', 'categoryId', 'priority'],
+    required: ['matchType', 'matchValue', 'categoryId'],
+    enums: { matchType: ['mcc', 'merchantName', 'merchantId', 'descriptionRegex'] },
+    defaultOrder: 'priority ASC, matchType ASC'
   }
 }
 
