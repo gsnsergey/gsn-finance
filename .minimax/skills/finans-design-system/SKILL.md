@@ -48,14 +48,14 @@ Vanilla ES-модули, `<script type="module">`. Entry: `ui/js/app.js`. Hash-�
 
 ## Быстрый старт: новая вьюха
 
-1. Создай `ui/js/views/<name>.js` → `export async function render(root)`.
-2. Загрузи данные параллельно: `const [a, b] = await Promise.all([api.get('/api/a'), api.get('/api/b')])`.
-3. Построй DOM через `root.innerHTML = '…'` (escape'ни все пользовательские значения).
-4. Навешай обработчики через `root.querySelectorAll('[data-action="…"]')` после записи.
-5. Зарегистрируй:
+1. Скопируй `ui/js/views/_template.js` → `cp ui/js/views/_template.js ui/js/views/<name>.js`
+   (готовый CRUD-шаблон с фильтрами, тулбаром, модалкой, escapeHtml, debounce).
+2. Find & replace `RESOURCE` → имя сущности, реальные эндпоинты/поля — см. подсказки внизу файла.
+3. Зарегистрируй:
    - `ui/js/app.js` → `import { render as foo } from './views/foo.js'` + `register('/foo', foo)`
    - `ui/js/router.js` → в `titleMap`: `'/foo': 'Название'`
    - `ui/js/sidebar.js` → в `NAV`: `{ path: '/foo', label: 'Название', icon: 'star' }`
+4. Если меняешь логику, а не просто копируешь — сверься с чеклистом `AGENTS.md §6`.
 
 ## Быстрый старт: форма
 
