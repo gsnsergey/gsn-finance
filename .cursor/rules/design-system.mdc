@@ -1,0 +1,34 @@
+---
+description: Дизайн-система и правила проекта Finans
+globs: ["ui/**/*.js", "ui/**/*.css", "ui/**/*.html"]
+alwaysApply: true
+---
+
+# Finans — правила проекта
+
+## Стек (5 строк)
+- Vanilla ES-модули (`<script type="module">`), точка входа `ui/js/app.js`.
+- Hash-роутер `ui/js/router.js`, вьюхи экспортируют `render(root)` из `ui/js/views/*.js`.
+- Один CSS-файл `ui/css/styles.css`, иконки — Font Awesome 4 из `ui/vendor/font-awesome/`.
+- API через `ui/js/api.js` (`api.get/post/patch/del`, `rub`, `toast`, `fmtDay`, `todayIso`).
+- Сборки нет, npm-пакетов нет, бэкенд отдаёт файлы как есть.
+
+## Топ-5 запретов
+- ❌ Никаких React/Vue/Svelte/Alpine/jQuery/Tailwind/Bootstrap/Material.
+- ❌ Никаких новых CSS-файлов и npm-пакетов.
+- ❌ Никаких `innerHTML` с пользовательскими значениями без `escapeHtml()`.
+- ❌ Никаких inline-стилей с хардкод-цветами (только через `var(--…)`).
+- ❌ Никаких новых типов полей в `openModal` без согласования.
+
+## Полные правила
+- **Дизайн-система:** см. `DESIGN.md` — токены, компоненты, примеры HTML.
+- **Архитектура и запреты:** см. `AGENTS.md` — контракт вьюх, чеклист, анти-паттерны.
+- **Рецепты (готовый код):** см. `SKILLS.md` — CRUD, формы, фильтры, тёмная тема.
+- **Как пользоваться всеми файлами:** см. `README-AI.md`.
+
+## Ключевые напоминания
+- Цвета — только через токены (`var(--accent)`, `var(--surface)`, …).
+- Используй существующие классы из `ui/css/styles.css`. Если не подходит — добавь в конец файла с комментарием «зачем», затем опиши в `DESIGN.md §3`.
+- Hover/active/focus на всём интерактивном (`:focus-visible` для outline).
+- Визуальный ориентир — Gentelella v4: плотная сетка, один акцент, мягкие тени.
+- Перед завершением — пройди чеклист из `AGENTS.md §6`.
