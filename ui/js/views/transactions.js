@@ -156,36 +156,37 @@ export async function render(root) {
     }
   }
 
-  // Бар фильтров — рендерится один раз, обработчики обновляют состояние и дёргают перезагрузку.
+  // Тулбар: фильтры и кнопка «Добавить» — в одной строке, кнопка сразу за фильтрами
+  // (в том же стиле, что строка итогов на «Подписках»).
   root.innerHTML = `
-    <div class="page-actions">
-      <button class="btn btn-primary" id="add-tx">+ Добавить операцию</button>
-    </div>
-    <div class="filters-bar">
-      <label class="filter"><span>Дата от</span><input type="date" data-filter="from" value="${escapeHtml(filters.from)}"></label>
-      <label class="filter"><span>Дата до</span><input type="date" data-filter="to" value="${escapeHtml(filters.to)}"></label>
-      <label class="filter"><span>Счёт</span>
-        <select data-filter="accountId">
-          <option value="">Все</option>
-          ${accounts.map(a => `<option value="${escapeHtml(a.id)}"${filters.accountId === a.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
-        </select>
-      </label>
-      <label class="filter"><span>Категория</span>
-        <select data-filter="categoryId">
-          <option value="">Все</option>
-          ${categories.map(c => `<option value="${escapeHtml(c.id)}"${filters.categoryId === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-        </select>
-      </label>
-      <label class="filter"><span>Тип</span>
-        <select data-filter="type">
-          <option value="">Все</option>
-          <option value="expense"${filters.type === 'expense' ? ' selected' : ''}>Расход</option>
-          <option value="income"${filters.type === 'income' ? ' selected' : ''}>Доход</option>
-          <option value="transfer"${filters.type === 'transfer' ? ' selected' : ''}>Перемещение</option>
-        </select>
-      </label>
-      <label class="filter"><span>Поиск</span><input type="text" data-filter="q" placeholder="комментарий…" value="${escapeHtml(filters.q)}"></label>
-      <button class="btn btn-sm" id="filters-bar-reset"${Object.values(filters).some(v => v) ? '' : ' style="display:none"'}>Сбросить</button>
+    <div class="page-toolbar page-toolbar--filters">
+      <div class="filters-bar filters-bar--inline">
+        <label class="filter"><span>Дата от</span><input type="date" data-filter="from" value="${escapeHtml(filters.from)}"></label>
+        <label class="filter"><span>Дата до</span><input type="date" data-filter="to" value="${escapeHtml(filters.to)}"></label>
+        <label class="filter"><span>Счёт</span>
+          <select data-filter="accountId">
+            <option value="">Все</option>
+            ${accounts.map(a => `<option value="${escapeHtml(a.id)}"${filters.accountId === a.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="filter"><span>Категория</span>
+          <select data-filter="categoryId">
+            <option value="">Все</option>
+            ${categories.map(c => `<option value="${escapeHtml(c.id)}"${filters.categoryId === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+          </select>
+        </label>
+        <label class="filter"><span>Тип</span>
+          <select data-filter="type">
+            <option value="">Все</option>
+            <option value="expense"${filters.type === 'expense' ? ' selected' : ''}>Расход</option>
+            <option value="income"${filters.type === 'income' ? ' selected' : ''}>Доход</option>
+            <option value="transfer"${filters.type === 'transfer' ? ' selected' : ''}>Перемещение</option>
+          </select>
+        </label>
+        <label class="filter"><span>Поиск</span><input type="text" data-filter="q" placeholder="счёт, категория, сумма, комментарий…" value="${escapeHtml(filters.q)}"></label>
+        <button class="btn btn-sm" id="filters-bar-reset"${Object.values(filters).some(v => v) ? '' : ' style="display:none"'}>Сбросить</button>
+        <button class="btn btn-primary" id="add-tx">+ Добавить операцию</button>
+      </div>
     </div>
   `
   document.getElementById('add-tx').addEventListener('click', () => openTransactionForm(root, accounts, categories, null))

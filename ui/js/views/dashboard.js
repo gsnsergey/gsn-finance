@@ -1,13 +1,17 @@
 import { api, rub } from '../api.js'
+// toMonthly — тот же коэффициент приведения периода к месяцу, что даёт итог
+// «В месяц» на вкладке «Обязательства». Импортируем, чтобы цифры совпадали.
+import { toMonthly } from './simple-list.js'
 
 export async function render(root) {
-  const [nw, subs, tx, accounts, today, catsList] = await Promise.all([
+  const [nw, subs, tx, accounts, today, catsList, obligations] = await Promise.all([
     api.get('/api/summary/net-worth'),
     api.get('/api/subscriptions'),
     api.get('/api/transactions?limit=5'),
     api.get('/api/accounts'),
     api.get('/api/summary/today'),
-    api.get('/api/categories')
+    api.get('/api/categories'),
+    api.get('/api/obligations')
   ])
 
   // Итог по счетам — по реальному остатку (balance + операции после даты сверки),
@@ -16,6 +20,10 @@ export async function render(root) {
     ? accounts.filter(a => !a.archived).reduce(
         (sum, a) => sum + (a.currentBalance !== undefined && a.currentBalance !== null ? a.currentBalance : a.balance), 0)
     : nw.accountsTotal
+
+  // Недвижимость — отдельная таблица `properties` (не счёт): у объекта нет
+  // операций и сверки, есть только оценочная стоимость. Отдаётся готовой суммой.
+  const propertiesTotal = nw.propertiesTotal || 0
 
   const subsMonthly = subs.filter(s => s.active).reduce((sum, s) => {
     if (s.period === 'monthly') return sum + s.amount
@@ -26,9 +34,11 @@ export async function render(root) {
 
   const nwClass = nw.netWorth >= 0 ? 'success' : 'danger'
 
-  // Обязательства всего = остаток по кредитам + годовая сумма активных подписок
-  // (подписки с периодом monthly/yearly/weekly уже приведены к месячному значению).
-  const obligationsTotal = (nw.loansRemaining || 0) + Math.round((subsMonthly || 0) * 12)
+  // Обязательства — данные вкладки «Обязательства» (таблица obligations),
+  // приведённые к месяцу тем же коэффициентом, что и итог «В месяц» в simple-list.js.
+  // Прежний композит «остаток по кредитам + годовая сумма подписок» убран:
+  // он не соответствовал вкладке «Обязательства» и вводил в заблуждение.
+  const obligationsMonthly = obligations.reduce((sum, r) => sum + toMonthly(r), 0)
 
   // Карточка — обёрнута в <a href="...">, чтобы клик работал как ссылка:
   // правый клик «Открыть в новой вкладке», Tab/Enter из коробки, focus-ring через :focus-visible.
@@ -51,12 +61,13 @@ export async function render(root) {
       ${cardLink('#/deposits', '', 'Вклады', rub(nw.depositsTotal), 'Открытые депозиты')}
       ${cardLink('#/portfolio', '', 'Портфель', rub(nw.holdingsTotal), (nw.holdingsTotal || 0) === 0 ? 'Нет позиций' : 'Стоимость (по последнему импорту)')}
       ${cardLink('#/loans', 'danger', 'Кредиты (остаток)', rub(nw.loansRemaining), 'Сколько должны')}
-      ${cardLink('#/obligations', 'danger', 'Обязательства всего', rub(obligationsTotal), 'Кредиты + годовая сумма подписок')}
     </div>
 
     <div class="cards">
       ${cardLink('#/subscriptions', '', 'Подписки / мес', rub(subsMonthly), `${subs.filter(s => s.active).length} активных`)}
+      ${cardLink('#/obligations', 'danger', 'Обязательства / мес', rub(obligationsMonthly), 'Из вкладки «Обязательства»')}
       ${cardLink('#/accounts', 'accent', 'На картах', rub(accountsTotal), 'Все счета, с учётом операций')}
+      ${propertiesTotal > 0 ? cardLink('#/properties', '', 'Недвижимость', rub(propertiesTotal), 'Имущество в активах') : ''}
       ${cardLink(`#/transactions?${todayQ}&type=income`, 'success', 'Доход сегодня', rub(today.incomeToday), `за ${today.date}`)}
       ${cardLink(`#/transactions?${todayQ}&type=expense`, 'danger', 'Расход сегодня', rub(today.expenseToday), `за ${today.date}`)}
     </div>
@@ -82,7 +93,7 @@ export async function render(root) {
 
   // Клик по строке «Последние операции» открывает ту же модалку редактирования,
   // что и в transactions.js. Подгружаем модалку динамически, чтобы не дублировать код.
-  const txRows = root.querySelectorAll('.tx-row')
+  const txRows = root.querySelectorAll ? root.querySelectorAll('.tx-row') : []
   if (txRows.length > 0) {
     const { openTransactionForm } = await import('./transactions.js')
     txRows.forEach(row => {

@@ -29,9 +29,16 @@ export async function render(root) {
     return
   }
 
+  const activeTotal = active.reduce((s, a) => s + balanceOf(a), 0)
+
   root.innerHTML = `
-    <div class="page-actions">
-      <button class="btn btn-primary" id="add-acc">+ Добавить счёт</button>
+    <div class="page-toolbar">
+      <div class="page-summary">
+        <span class="page-summary-item"><span class="page-summary-label">Итого</span> <span class="page-summary-value">${rub(activeTotal)}</span></span>
+      </div>
+      <div class="page-actions">
+        <button class="btn btn-primary" id="add-acc">+ Добавить счёт</button>
+      </div>
     </div>
     <div class="table-wrap"><table class="table">
       <thead><tr><th>Название</th><th>Банк</th><th>Тип</th><th>Валюта</th><th class="num">Текущий остаток</th><th style="width:120px"></th></tr></thead>
@@ -40,7 +47,7 @@ export async function render(root) {
           <tr>
             <td>
               <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${a.color || '#999'};margin-right:8px;vertical-align:middle"></span>${a.name}
-              <div style="font-size:11px;color:var(--muted);margin-top:2px">${syncLabel(a)}${a.cards && a.cards.length > 0 ? ` · <a href="#" data-action="cards-toggle" data-id="${a.id}" class="cards-badge" title="Показать карты">🗂 ${a.cards.length} ${a.cards.length === 1 ? 'карта' : a.cards.length < 5 ? 'карты' : 'карт'}</a>` : ` · <a href="#" data-action="cards-manage" data-id="${a.id}" class="cards-badge" style="color:var(--muted)" title="Привязать карты">+ карты</a>`}</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:2px">${syncLabel(a)}${a.cards && a.cards.length > 0 ? ` · <a href="#" data-action="cards-toggle" data-id="${a.id}" class="cards-badge" title="Показать карты" aria-expanded="false"><span class="cards-badge-caret">▸</span>🗂 ${a.cards.length} ${a.cards.length === 1 ? 'карта' : a.cards.length < 5 ? 'карты' : 'карт'}</a>` : ` · <a href="#" data-action="cards-manage" data-id="${a.id}" class="cards-badge" style="color:var(--muted)" title="Привязать карты">+ карты</a>`}</div>
               ${a.cards && a.cards.length > 0 ? `<div class="cards-list" data-cards-for="${a.id}" hidden>
                 ${a.cards.map(c => `<div class="cards-list-item">${escapeHtml(c.panMask)}${c.label ? ` <span class="muted">— ${escapeHtml(c.label)}</span>` : ''}</div>`).join('')}
               </div>` : ''}
@@ -61,7 +68,7 @@ export async function render(root) {
         `).join('')}
         <tr style="font-weight:600;background:rgba(0,0,0,0.02)">
           <td colspan="4">Итого</td>
-          <td class="num">${rub(active.reduce((s, a) => s + balanceOf(a), 0))}</td>
+          <td class="num">${rub(activeTotal)}</td>
           <td></td>
         </tr>
       </tbody>
@@ -100,12 +107,18 @@ export async function render(root) {
     })
   })
 
-  // Раскрыть/свернуть список карт под именем счёта
+  // Раскрыть/свернуть список карт кликом по числу карт
   root.querySelectorAll('[data-action="cards-toggle"]').forEach(link => {
     link.addEventListener('click', (e) => {
       e.preventDefault()
       const list = root.querySelector(`[data-cards-for="${link.dataset.id}"]`)
-      if (list) list.hidden = !list.hidden
+      if (!list) return
+      const willOpen = list.hidden
+      list.hidden = !willOpen
+      link.setAttribute('aria-expanded', String(willOpen))
+      link.title = willOpen ? 'Скрыть карты' : 'Показать карты'
+      const caret = link.querySelector('.cards-badge-caret')
+      if (caret) caret.textContent = willOpen ? '▾' : '▸'
     })
   })
 

@@ -156,6 +156,12 @@ router.get('/summary/net-worth', (req, res) => {
     const accountsTotal = db.prepare(
       `SELECT COALESCE(SUM(${CURRENT_BALANCE_EXPR}), 0) as s FROM accounts a WHERE a.archived = 0`
     ).get().s
+    // Недвижимость/имущество живёт в отдельной таблице `properties`, а не в
+    // `accounts` (у имущества нет операций, карт и сверки остатка). В активы
+    // входит отдельным слагаемым, поэтому accountsTotal остаётся «деньгами».
+    const propertiesTotal = db.prepare(
+      `SELECT COALESCE(SUM(value), 0) as s FROM properties WHERE archived = 0`
+    ).get().s
     const depositsTotal = db.prepare(`SELECT COALESCE(SUM(currentBalance), 0) as s FROM deposits WHERE closedAt IS NULL`).get().s
     // Стоимость портфеля = SUM(currentValue). currentValue УЖЕ в копейках
     // (Tinkoff/BCS upsert: Math.round(rubles * 100)). Раньше здесь было
@@ -184,10 +190,11 @@ router.get('/summary/net-worth', (req, res) => {
       ), 0) as s FROM obligations
     `).get().s
 
-    const assets = (Number(accountsTotal) || 0) + (Number(depositsTotal) || 0) + (Number(holdingsTotal) || 0)
+    const assets = (Number(accountsTotal) || 0) + (Number(depositsTotal) || 0) + (Number(holdingsTotal) || 0) + (Number(propertiesTotal) || 0)
     const liabilities = (loansRemaining || 0)
     res.json({
       accountsTotal,
+      propertiesTotal,
       depositsTotal,
       holdingsTotal,
       loansRemaining,

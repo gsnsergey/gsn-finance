@@ -42,6 +42,16 @@ export const TABLE_CONFIGS = {
     enums: { type: ['consumer', 'mortgage', 'credit_line'] },
     defaultOrder: 'openedAt DESC'
   },
+  // Недвижимость/имущество — отдельный вид актива, не банковский счёт.
+  // value — оценочная стоимость в копейках; учитывается в assets (net worth).
+  properties: {
+    table: 'properties',
+    fields: ['name', 'type', 'address', 'value', 'currency', 'purchasedAt', 'comment', 'color', 'archived'],
+    required: ['name', 'type', 'value'],
+    enums: { type: ['apartment', 'house', 'land', 'garage', 'commercial', 'other'] },
+    booleanFields: ['archived'],
+    defaultOrder: 'value DESC'
+  },
   subscriptions: {
     table: 'subscriptions',
     fields: ['name', 'amount', 'currency', 'period', 'nextChargeDate', 'categoryId', 'autoDetected', 'active'],

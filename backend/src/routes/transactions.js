@@ -14,7 +14,8 @@ function loadAccount(id) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
 }
 
-// LIST with filters: accountId, categoryId, type, from, to, q (comment search)
+// LIST with filters: accountId, categoryId, type, from, to, q
+// q — поиск по комментарию, счёту, категории и сумме (регистронезависимый).
 router.get('/', (req, res) => {
   const { accountId, categoryId, type, from, to, q, limit = 500 } = req.query
   const where = []
@@ -24,7 +25,22 @@ router.get('/', (req, res) => {
   if (type) { where.push('type = ?'); params.push(type) }
   if (from) { where.push('date >= ?'); params.push(from) }
   if (to) { where.push('date <= ?'); params.push(to) }
-  if (q) { where.push('comment LIKE ?'); params.push(`%${q}%`) }
+  if (q) {
+    // Поиск «одним полем»: комментарий, счёт, категория и сумма.
+    // lower_unicode — JS-функция из db.js: SQLite LOWER/LIKE не сворачивают
+    // регистр кириллицы, поэтому опускаем регистр обеих сторон сами.
+    const needle = String(q).trim().toLowerCase()
+    // Сумма в БД в копейках, а пользователь ищет рублями («1500», «1 500,50»).
+    const num = needle.replace(/\s+/g, '').replace(',', '.')
+    where.push(`(
+      lower_unicode(comment) LIKE ?
+      OR lower_unicode((SELECT name FROM accounts WHERE id = transactions.accountId)) LIKE ?
+      OR lower_unicode((SELECT name FROM categories WHERE id = transactions.categoryId)) LIKE ?
+      OR printf('%.2f', amount / 100.0) LIKE ?
+      OR CAST(amount AS TEXT) LIKE ?
+    )`)
+    params.push(`%${needle}%`, `%${needle}%`, `%${needle}%`, `%${num}%`, `%${num}%`)
+  }
 
   const sql = `SELECT * FROM transactions ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY date DESC, createdAt DESC LIMIT ?`
   params.push(Number(limit))

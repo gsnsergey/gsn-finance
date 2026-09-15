@@ -213,6 +213,31 @@ commands['add-obligation'] = async (f) => {
   ok(`obligation "${created.name}" ${kopToRub(created.amount)}/${created.period}`)
 }
 
+// ===== PROPERTIES =====
+
+commands['add-property'] = async (f) => {
+  const body = {
+    name: requireFlag(f, 'name'),
+    type: requireFlag(f, 'type'),
+    value: rubToKop(requireFlag(f, 'value')),
+    address: f.address,
+    purchasedAt: f.purchased || null,
+    comment: f.comment,
+    currency: f.currency || 'RUB'
+  }
+  const created = await api.post('/api/properties', body)
+  ok(`property "${created.name}" (${created.type}) ${kopToRub(created.value)}`)
+}
+
+commands['list-properties'] = async () => {
+  const rows = await api.get('/api/properties')
+  if (rows.length === 0) { console.log('No properties.'); return }
+  console.log('Properties:')
+  for (const p of rows) {
+    console.log(`  ${p.name.padEnd(30)} ${String(p.type).padEnd(12)} ${kopToRub(p.value).padEnd(16)} ${p.address || ''}`)
+  }
+}
+
 // ===== REPORTS =====
 
 commands['net-worth'] = async () => {
@@ -221,6 +246,8 @@ commands['net-worth'] = async () => {
   console.log(`  Assets:`)
   console.log(`    Accounts:    ${kopToRub(nw.accountsTotal)}`)
   console.log(`    Deposits:    ${kopToRub(nw.depositsTotal)}`)
+  console.log(`    Holdings:    ${kopToRub(nw.holdingsTotal)}`)
+  console.log(`    Properties:  ${kopToRub(nw.propertiesTotal || 0)}`)
   console.log(`    Total:       ${kopToRub(nw.assets)}`)
   console.log(`  Liabilities:`)
   console.log(`    Loans:       ${kopToRub(nw.loansRemaining)}`)

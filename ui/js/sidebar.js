@@ -6,6 +6,7 @@ const NAV = [
   { path: '/accounts', label: 'Счета и карты', icon: 'credit-card' },
   { path: '/deposits', label: 'Вклады', icon: 'bank' },
   { path: '/portfolio', label: 'Портфель', icon: 'line-chart' },
+  { path: '/properties', label: 'Недвижимость', icon: 'home' },
   { section: 'Обязательства' },
   { path: '/loans', label: 'Кредиты', icon: 'warning' },
   { path: '/subscriptions', label: 'Подписки', icon: 'refresh' },

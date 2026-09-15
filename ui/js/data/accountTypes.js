@@ -1,4 +1,5 @@
 // Типы банковских счетов / карт.
+// Недвижимость — не счёт, у неё отдельная вкладка и модель (см. ui/js/data/propertyTypes.js).
 
 export const ACCOUNT_TYPES = [
   { value: 'debit', label: 'Дебетовая карта' },

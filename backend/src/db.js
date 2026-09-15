@@ -19,5 +19,13 @@ const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
+// SQLite LIKE/LOWER без учёта регистра работают только для ASCII, а комментарии
+// и названия у нас кириллицей. Регистрируем deterministic-функцию приведения к
+// нижнему регистру на JS (Unicode-aware), чтобы поиск (transactions?q=…:
+// комментарий, счёт, категория) не зависел от регистра для любых языков.
+db.function('lower_unicode', { deterministic: true }, (value) =>
+  value == null ? null : String(value).toLowerCase()
+)
+
 export default db
 export { dbPath, dataDir }

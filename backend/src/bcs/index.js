@@ -190,43 +190,44 @@ export function upsertHoldings(positions) {
   `)
   const updateStmt = db.prepare(`
     UPDATE holdings SET
-      name = ?, type = ?, quantity = ?, avgBuyPrice = ?, currentPrice = ?, currentValue = ?,
+      name = ?, type = ?, quantity = ?, avgBuyPrice = ?, currentPrice = ?,
+      totalCost = ?, currentValue = ?, profit = ?, profitPct = ?,
       currency = ?, account = ?, updatedAt = ?
     WHERE id = ?
   `)
   const insertStmt = db.prepare(`
-    INSERT INTO holdings (id, broker, ticker, name, type, quantity, avgBuyPrice, currentPrice, currentValue, currency, account, createdAt, updatedAt)
-    VALUES (?, 'bcs', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO holdings (id, broker, type, ticker, name, quantity, avgBuyPrice, currentPrice, totalCost, currentValue, profit, profitPct, currency, account, createdAt, updatedAt)
+    VALUES (?, 'bcs', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const now = new Date().toISOString()
   let upserted = 0, skipped = 0
   const tx = db.transaction(() => {
     for (const p of positions) {
+      // Все денежные поля — в КОПЕЙКАХ (как у Тинькофф и как ждёт UI/`rub()`).
+      const avgBuyPriceKp = Math.round(p.avgBuyPrice * 100)
+      const currentValueKp = Math.round(p.currentValue * 100)
+      const currentPriceKp = p.quantity > 0 ? Math.round(currentValueKp / p.quantity) : 0
+      // totalCost/profit/profitPct считаем так же, как при импорте Тинькофф.
+      // Раньше БКС их вообще не писал — в портфеле не было прибыли и процента.
+      const totalCostKp = Math.round(p.quantity * p.avgBuyPrice * 100)
+      const profitKp = currentValueKp - totalCostKp
+      const profitPct = totalCostKp > 0 ? (profitKp / totalCostKp) * 100 : 0
+      // type из normalizePosition (акция/облигация/ETF/…), иначе всё писалось «Акция».
+      const type = p.type || 'stock'
+
       const existing = stmt.get(p.ticker, p.brokerAccountId, p.brokerAccountId)
       if (existing) {
         updateStmt.run(
-          p.name, 'stock',
-          p.quantity,
-          Math.round(p.avgBuyPrice * 100),
-          p.quantity > 0 ? Math.round((p.currentValue / p.quantity) * 100) : 0,
-          Math.round(p.currentValue * 100),
-          p.currency,
-          p.brokerAccountId,
-          now,
-          existing.id
+          p.name, type, p.quantity, avgBuyPriceKp, currentPriceKp,
+          totalCostKp, currentValueKp, profitKp, profitPct,
+          p.currency, p.brokerAccountId, now, existing.id
         )
         upserted++
       } else {
         insertStmt.run(
-          crypto.randomUUID(),
-          p.ticker, p.name, 'stock',
-          p.quantity,
-          Math.round(p.avgBuyPrice * 100),
-          p.quantity > 0 ? Math.round((p.currentValue / p.quantity) * 100) : 0,
-          Math.round(p.currentValue * 100),
-          p.currency,
-          p.brokerAccountId,
-          now, now
+          crypto.randomUUID(), type, p.ticker, p.name, p.quantity,
+          avgBuyPriceKp, currentPriceKp, totalCostKp, currentValueKp, profitKp, profitPct,
+          p.currency, p.brokerAccountId, now, now
         )
         upserted++
       }

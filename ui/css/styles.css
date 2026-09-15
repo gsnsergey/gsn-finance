@@ -744,19 +744,88 @@ html, body {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
 }
+/* Инлайн-вариант: компактная строка фильтров прямо в тулбаре, в одном стиле
+   с .page-summary (страница «Операции»). Без карточки — только поля. */
+.filters-bar--inline {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.filters-bar--inline .filter {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.filters-bar--inline .filter > span {
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  color: var(--muted);
+}
+.filters-bar--inline input,
+.filters-bar--inline select {
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+.filters-bar--inline input[type="date"] { width: 138px; }
+.filters-bar--inline input[type="text"] { width: 150px; }
+.filters-bar--inline input:focus,
+.filters-bar--inline select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
 
 /* Контейнер .table-section оборачивает фильтры + таблицу, чтобы можно
    было перерисовать только эту часть при изменении фильтра. */
 .table-section { display: contents; }
 
-/* === Toolbar (view-mode toggle слева + actions справа) === */
+/* === Toolbar (итоги/фильтры/переключатель слева + actions справа) === */
 .page-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
 }
+/* Внутри тулбара .page-actions не создаёт отдельную строку и не тянет отступ. */
+.page-toolbar .page-actions {
+  margin-bottom: 0;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+/* Тулбар страницы «Операции»: фильтры и кнопка «+ Добавить» — в одной строке,
+   кнопка идёт сразу за фильтрами (внутри .filters-bar--inline), без прижатия
+   к правому краю. */
+.page-toolbar--filters { justify-content: flex-start; }
+.page-toolbar--filters .filters-bar--inline { flex: 1 1 auto; }
+/* Компактная строка итогов слева в тулбаре (напр. «Активных 4 · В месяц … »). */
+.page-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 13px;
+  min-width: 0;
+}
+.page-summary-label { color: var(--muted); }
+.page-summary-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.page-summary-sep { color: var(--muted); opacity: 0.6; }
 .view-mode-toggle {
   display: inline-flex;
   border: 1px solid var(--border);
@@ -807,6 +876,13 @@ html, body {
   transition: background 0.1s;
 }
 .import-menu-item:hover { background: rgba(37,99,235,0.08); }
+/* «Загрузить по всем счетам» — первый пункт меню, отделён от списка счетов. */
+.import-menu-item-all {
+  border-bottom: 1px solid var(--border);
+  border-radius: 6px 6px 0 0;
+  margin-bottom: 2px;
+}
+.import-menu-item-all .import-menu-item-title { color: var(--accent); font-weight: 600; }
 .import-menu-item-title { font-size: 13px; font-weight: 500; color: var(--text); }
 .import-menu-item-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .import-menu-item-sub code { font-size: 11px; padding: 0 4px; background: var(--bg); border-radius: 3px; }
@@ -837,7 +913,12 @@ html, body {
   flex-direction: column;
   gap: 2px;
 }
+/* Авторский display у .cards-list перебивает UA-правило [hidden]{display:none},
+   поэтому список карт нужно скрывать явно — иначе он виден всегда. */
+.cards-list[hidden] { display: none; }
 .cards-list-item .muted { color: var(--muted); }
+/* Каретка у числа карт: ▸ свёрнуто, ▾ развёрнуто. */
+.cards-badge-caret { display: inline-block; width: 10px; color: var(--muted); }
 
 /* === Tree view (портфель деревом) === */
 .tree-wrap {
@@ -853,6 +934,7 @@ html, body {
 .tree-group-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
   cursor: pointer;
@@ -870,30 +952,51 @@ html, body {
   width: 12px;
   flex-shrink: 0;
 }
-.tree-group-header .tree-group-label { flex-shrink: 0; }
+.tree-group-header .tree-group-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tree-group-header .tree-group-metrics {
   margin-left: auto;
   display: flex;
   gap: 12px;
   font-weight: 400;
   font-size: 12px;
+  flex-shrink: 0;
 }
 .tree-group-header .tree-group-metric .muted { color: var(--muted); margin-right: 4px; }
 .tree-group-children { padding-left: 20px; }
+/* Позиция в дереве — вертикальная карточка: шапка (тикер + название),
+   затем поля друг под другом. Так читается лучше, чем строка из 5 колонок. */
 .tree-leaf {
-  display: grid;
-  grid-template-columns: 80px minmax(0, 1fr) 80px 110px 110px;
-  gap: 12px;
-  align-items: baseline;
-  padding: 6px 12px;
+  padding: 8px 12px;
   font-size: 13px;
   border-bottom: 1px solid var(--border);
 }
 .tree-leaf:last-child { border-bottom: none; }
-.tree-leaf-ticker { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 500; }
-.tree-leaf-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-leaf-qty { text-align: right; font-variant-numeric: tabular-nums; }
-.tree-leaf-value, .tree-leaf-profit { text-align: right; }
+.tree-leaf-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+}
+.tree-leaf-ticker { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-weight: 600; white-space: nowrap; }
+.tree-leaf-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.tree-leaf-fields { display: flex; flex-direction: column; gap: 2px; }
+.tree-leaf-field { display: flex; align-items: baseline; gap: 8px; }
+.tree-leaf-label { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
+.tree-leaf-qty,
+.tree-leaf-value,
+.tree-leaf-profit {
+  margin-left: auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 
 /* === Settings page: компактная таблица категорий ===
    Раньше padding 8px12px, hex-код в колонке «Цвет», плюс здоровенная карточка
@@ -940,15 +1043,16 @@ html, body {
 }
 .empty-inline code { font-size: 12px; padding: 1px 4px; background: var(--surface); border-radius: 3px; }
 
-/* === Mini-dashboard (агрегаты по группам, над таблицей) === */
-.dashboard-section { margin-bottom: 12px; }
+/* === Mini-dashboard (агрегаты по группам, над таблицей) ===
+   Компактный вид: одна строка на группу (брокер/счёт), без «карточных» отступов. */
+.dashboard-section { margin-bottom: 8px; }
 .dashboard-section-title {
   font-size: 12px;
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
   letter-spacing: 0.04em;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
 }
 /* Кликабельный заголовок секции дашборда: chevron + название,
    hover/aria/focus — как у дропдауна. */
@@ -957,10 +1061,10 @@ html, body {
   align-items: center;
   gap: 6px;
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 2px 6px;
   border-radius: 6px;
-  margin-left: -8px;
-  margin-bottom: 8px;
+  margin-left: -6px;
+  margin-bottom: 4px;
   user-select: none;
   transition: background 0.1s;
 }
@@ -969,29 +1073,32 @@ html, body {
 .dashboard-section-toggle .fa { font-size: 10px; width: 10px; text-align: center; }
 .dashboard-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 6px 10px;
 }
+/* Карточка группы — компактная строка: «Брокер  Позиций N  Стоимость …  Прибыль …». */
 .dashboard-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 12px 14px;
-  box-shadow: var(--shadow);
+  border-radius: 6px;
+  padding: 6px 10px;
 }
 .dashboard-card-title {
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin: 0;
   color: var(--text);
 }
 .dashboard-metric {
-  display: flex;
-  justify-content: space-between;
+  display: inline-flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px;
   font-size: 12px;
-  margin-top: 2px;
+  margin: 0;
 }
 .dashboard-metric-label { color: var(--muted); }
 .dashboard-metric-value { font-variant-numeric: tabular-nums; font-weight: 500; }

@@ -38,6 +38,7 @@ async function render() {
     '/accounts': 'Счета и карты',
     '/deposits': 'Вклады',
     '/portfolio': 'Портфель',
+    '/properties': 'Недвижимость',
     '/loans': 'Кредиты',
     '/subscriptions': 'Подписки',
     '/obligations': 'Обязательства',

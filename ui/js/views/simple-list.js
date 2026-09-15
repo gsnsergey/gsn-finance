@@ -13,6 +13,7 @@ const currencySign = code => SYMBOL_BY_CODE[code] || ''
 const currencyCode = code => code || '—'
 import { BROKERS, brokerLabel } from '../data/brokers.js'
 import { LOAN_TYPES, loanTypeLabel } from '../data/loanTypes.js'
+import { PROPERTY_TYPES, propertyTypeLabel } from '../data/propertyTypes.js'
 import { ASSET_TYPES, assetTypeLabel } from '../data/assetTypes.js'
 import { categoryIconHTML } from '../data/categoryIcons.js'
 import { brokerAccounts } from '../data/brokerAccounts.js'
@@ -28,6 +29,17 @@ const PERIOD_LABELS = {
   daily: 'Ежедневно'
 }
 const periodLabel = v => PERIOD_LABELS[v] || v || '—'
+
+// Приведение суммы к месяцу/году для подписок и обязательств с разными периодами.
+// Суммы хранятся в копейках (integer), результат тоже в копейках.
+// Делители для «в месяц»: year → /12, quarter → /3, week → ×52/12, day → ×365/12.
+// Множители для «в год»: month → ×12, quarter → ×4, week → ×52, day → ×365.
+const MONTHLY_FACTOR = { monthly: 1, quarterly: 1 / 3, yearly: 1 / 12, weekly: 52 / 12, daily: 365 / 12 }
+const YEARLY_FACTOR = { monthly: 12, quarterly: 4, yearly: 1, weekly: 52, daily: 365 }
+// toMonthly экспортируется: тот же итог «В месяц» показывает карточка обязательств
+// на дашборде (dashboard.js), чтобы значения вкладки и дашборда не расходились.
+export const toMonthly = r => Math.round((r.amount || 0) * (MONTHLY_FACTOR[r.period] ?? 0))
+const toYearly = r => Math.round((r.amount || 0) * (YEARLY_FACTOR[r.period] ?? 0))
 
 const COL_DATE = () => ({ render: v => v })
 
@@ -85,6 +97,10 @@ const CONFIGS = {
       { key: 'currentBalance', label: 'Текущий баланс', render: rub, num: true }
     ],
     sumKey: 'currentBalance',
+    // Итог в тулбаре — в одной строке с «+ Добавить», как на «Счетах».
+    summary: (rows) => [
+      { label: 'Итого', value: rub(rows.reduce((s, r) => s + (r.currentBalance || 0), 0)) }
+    ],
     addFields: () => [
       { name: 'bank', label: 'Банк', type: 'combobox', required: true, placeholder: 'начни вводить или выберите', options: BANKS },
       { name: 'name', label: 'Название', type: 'text', required: true, placeholder: 'Накопительный' },
@@ -273,6 +289,10 @@ const CONFIGS = {
       { key: 'remainingAmount', label: 'Остаток', render: rub, num: true }
     ],
     sumKey: 'remainingAmount',
+    // Итог в тулбаре — в одной строке с «+ Добавить».
+    summary: (rows) => [
+      { label: 'Итого', value: rub(rows.reduce((s, r) => s + (r.remainingAmount || 0), 0)) }
+    ],
     addFields: () => [
       { name: 'bank', label: 'Банк', type: 'combobox', required: true, placeholder: 'начни вводить или выберите', options: BANKS },
       { name: 'name', label: 'Название', type: 'text', required: true, placeholder: 'Потреб' },
@@ -287,6 +307,36 @@ const CONFIGS = {
       { name: 'paymentDay', label: 'День платежа (1–31)', type: 'number', required: true, min: 1, max: 31, integer: true },
       { name: 'openedAt', label: 'Дата открытия', type: 'date', required: true, value: todayIso() },
       { name: 'closedAt', label: 'Плановая дата закрытия', type: 'date' }
+    ]
+  },
+
+  // Недвижимость/имущество. Отдельная вкладка (не «Счета»): у объекта нет
+  // операций и сверки остатка, есть только оценочная стоимость.
+  properties: {
+    title: 'Недвижимость',
+    addTitle: 'Новый объект',
+    columns: [
+      { key: 'name', label: 'Название' },
+      { key: 'type', label: 'Тип', render: propertyTypeLabel },
+      { key: 'address', label: 'Адрес' },
+      { key: 'value', label: 'Стоимость', render: rub, num: true },
+      { key: 'purchasedAt', label: 'Куплено', render: v => v || '—' },
+      { key: 'comment', label: 'Заметка' }
+    ],
+    sumKey: 'value',
+    // Итог в тулбаре — в одной строке с «+ Добавить», как у вкладов и кредитов.
+    // Считается по отфильтрованным строкам (см. renderTableSection).
+    summary: (rows) => [
+      { label: 'Итого', value: rub(rows.reduce((s, r) => s + (r.value || 0), 0)) }
+    ],
+    addFields: () => [
+      { name: 'name', label: 'Название', type: 'text', required: true, placeholder: 'Квартира, ипотека Сбер' },
+      { name: 'type', label: 'Тип', type: 'select', required: true, value: 'apartment', options: PROPERTY_TYPES },
+      { name: 'address', label: 'Адрес', type: 'text', placeholder: 'город, улица, дом (опционально)' },
+      { name: 'value', label: 'Оценочная стоимость (₽)', type: 'number', required: true, step: '0.01', kopecks: true },
+      { name: 'purchasedAt', label: 'Дата покупки (опционально)', type: 'date' },
+      { name: 'comment', label: 'Заметка (опционально)', type: 'textarea', placeholder: 'в залоге по ипотеке, площадь и т. п.' },
+      { name: 'currency', label: 'Валюта', type: 'combobox', placeholder: 'RUB', options: CURRENCIES, value: 'RUB' }
     ]
   },
 
@@ -306,6 +356,18 @@ const CONFIGS = {
       { key: 'nextChargeDate', label: 'Следующий платёж', ...COL_DATE() },
       { key: 'active', label: 'Активна', render: v => v ? 'да' : 'нет' }
     ],
+    // Итоги в тулбаре (в одной строке с «+ Добавить»): суммы по разным периодам
+    // приводим к месяцу/году — иначе смешивать «339 ₽/мес» и «4490 ₽/год» нельзя.
+    // Считается по ОТФИЛЬТРОВАННЫМ строкам и только по активным подпискам —
+    // та же база, что у карточки «Подписки / мес» на дашборде (WHERE active = 1).
+    summary: (rows) => {
+      const active = rows.filter(r => r.active)
+      return [
+        { label: 'Активных', value: String(active.length) },
+        { label: 'В месяц', value: rub(active.reduce((s, r) => s + toMonthly(r), 0)) },
+        { label: 'В год', value: rub(active.reduce((s, r) => s + toYearly(r), 0)) }
+      ]
+    },
     // Подгружаем категории один раз для всех колонок, чтобы render
     // функции могли резолвить categoryId → иконка + название.
     contextAsync: async () => {
@@ -349,6 +411,12 @@ const CONFIGS = {
       { key: 'amount', label: 'Сумма', render: rub, num: true },
       { key: 'period', label: 'Период', render: periodLabel },
       { key: 'nextDueDate', label: 'Следующий', ...COL_DATE() }
+    ],
+    // Здесь периоды разные (месяц/квартал/год), поэтому «Итого» — это приведённая
+    // сумма: в месяц и в год. Складывать сырые суммы было бы неверно.
+    summary: (rows) => [
+      { label: 'В месяц', value: rub(rows.reduce((s, r) => s + toMonthly(r), 0)) },
+      { label: 'В год', value: rub(rows.reduce((s, r) => s + toYearly(r), 0)) }
     ],
     addFields: () => [
       { name: 'name', label: 'Название', type: 'text', required: true, placeholder: 'Аренда' },
@@ -426,10 +494,13 @@ export function makeListView(endpoint) {
         ${hasAdd ? `<button class="btn btn-primary" id="add-btn">+ Добавить</button>` : ''}
       </div>` : ''
 
-    // Тулбар: слева переключатель режима (если есть), справа действия.
-    // Если переключателя нет — оставляем как раньше (только actionsHtml).
-    const toolbarHtml = hasViewMode
-      ? `<div class="page-toolbar">${viewModeHtml}${actionsHtml}</div>`
+    // Строка итогов (cfg.summary) — слева в тулбаре, в одной строке с кнопками.
+    const summaryHtml = cfg.summary ? '<div class="page-summary" id="page-summary"></div>' : ''
+
+    // Тулбар: слева итоги (если есть) и/или переключатель режима, справа действия.
+    // Без view-mode и итогов — оставляем как раньше (только actionsHtml).
+    const toolbarHtml = (hasViewMode || cfg.summary)
+      ? `<div class="page-toolbar">${summaryHtml}${viewModeHtml}${actionsHtml}</div>`
       : actionsHtml
 
     // Текущие значения фильтров (хранится в замыкании, чтобы при изменении
@@ -514,14 +585,18 @@ export function makeListView(endpoint) {
 
     function renderTreeNode(node) {
       if (node.kind === 'leaf') {
-        // Позиция — компактная строка с основными полями.
+        // Позиция — вертикальная карточка: тикер/название сверху, поля друг под другом.
         const r = node.row
         return `<div class="tree-leaf" data-id="${escapeHtml(r.id)}">
-          <span class="tree-leaf-ticker">${escapeHtml(r.ticker || '')}</span>
-          <span class="tree-leaf-name">${escapeHtml(r.name || '')}</span>
-          <span class="tree-leaf-qty">${escapeHtml(String(r.quantity ?? 0))}</span>
-          <span class="tree-leaf-value num">${r.currentValue != null ? rub(r.currentValue) : '—'}</span>
-          <span class="tree-leaf-profit num">${r.profit != null ? rub(r.profit) : '—'}</span>
+          <div class="tree-leaf-head">
+            <span class="tree-leaf-ticker">${escapeHtml(r.ticker || '')}</span>
+            <span class="tree-leaf-name">${escapeHtml(r.name || '')}</span>
+          </div>
+          <div class="tree-leaf-fields">
+            <div class="tree-leaf-field"><span class="tree-leaf-label">Кол-во</span><span class="tree-leaf-qty">${escapeHtml(String(r.quantity ?? 0))}</span></div>
+            <div class="tree-leaf-field"><span class="tree-leaf-label">Стоимость</span><span class="tree-leaf-value num">${r.currentValue != null ? rub(r.currentValue) : '—'}</span></div>
+            <div class="tree-leaf-field"><span class="tree-leaf-label">Прибыль</span><span class="tree-leaf-profit num">${r.profit != null ? rub(r.profit) : '—'}</span></div>
+          </div>
         </div>`
       }
       // Группа — кликабельный заголовок + (если развёрнута) дети.
@@ -582,6 +657,22 @@ export function makeListView(endpoint) {
           ${isCollapsed ? '' : `<div class="dashboard-cards">${cards}</div>`}
         </div>`
       }).join('')
+    }
+
+    // Итоги (cfg.summary) — компактная строка в тулбаре, слева от кнопок.
+    // Позволяет показать агрегаты, которые нельзя свести к одному cfg.sumKey
+    // (например, суммы подписок с разными периодами, приведённые к месяцу/году).
+    function summaryItemsHtml(filtered) {
+      const metrics = cfg.summary(filtered)
+      if (!metrics || metrics.length === 0) return ''
+      return metrics.map(m =>
+        `<span class="page-summary-item"><span class="page-summary-label">${escapeHtml(m.label)}</span> <span class="page-summary-value">${m.value}</span></span>`
+      ).join('<span class="page-summary-sep">·</span>')
+    }
+
+    function updateSummary() {
+      const el = root.querySelector('#page-summary')
+      if (el) el.innerHTML = summaryItemsHtml(getFilteredRows())
     }
 
     function renderTreeSection() {
@@ -811,6 +902,7 @@ export function makeListView(endpoint) {
     // renderSection выбирает таблицу или дерево по viewModeState.mode
     // и обновляет содержимое .table-section (не весь root).
     function renderSection() {
+      if (cfg.summary) updateSummary()
       if (viewModeState.mode === 'tree' && cfg.tree) {
         renderTreeSection()
       } else {
@@ -914,6 +1006,13 @@ function wireImportMenu(root, cfg, render) {
       dropdown.querySelector('#goto-settings').addEventListener('click', () => { dropdown.hidden = true })
       return
     }
+    const calls = buildAllImportCalls(creds)
+    const allItem = calls.length > 0
+      ? `<button class="import-menu-item import-menu-item-all" id="import-all">
+          <div class="import-menu-item-title">↻ Загрузить по всем счетам</div>
+          <div class="import-menu-item-sub">${calls.length} ${plural(calls.length, 'счёт', 'счёта', 'счетов')} с интеграциями</div>
+        </button>`
+      : ''
     const items = creds.map(c => {
       // Для Т-Инвестиций brokerAccountId в теле не нужен (один токен на все счета).
       // Для БКС — обязателен.
@@ -924,9 +1023,11 @@ function wireImportMenu(root, cfg, render) {
         <div class="import-menu-item-sub"><code>${escapeHtml(c.brokerAccountId)}</code></div>
       </button>`
     }).join('')
-    dropdown.innerHTML = items
+    dropdown.innerHTML = allItem + items
     dropdown.hidden = false
-    dropdown.querySelectorAll('.import-menu-item').forEach(item => {
+    const allBtn = dropdown.querySelector('#import-all')
+    if (allBtn) allBtn.addEventListener('click', () => runImportAll(calls))
+    dropdown.querySelectorAll('.import-menu-item[data-provider]').forEach(item => {
       item.addEventListener('click', async () => {
         dropdown.hidden = true
         btn.disabled = true
@@ -953,6 +1054,59 @@ function wireImportMenu(root, cfg, render) {
         }
       })
     })
+  }
+
+  // «Сразу по всем счетам»: Т-Инвестиции — один токен покрывает все счета,
+  // поэтому один вызов; БКС — токен на каждый счёт, вызов на счёт.
+  // Провайдеры без импортёра (finam/other) пропускаются.
+  function buildAllImportCalls(creds) {
+    const calls = []
+    const seenTinkoff = new Set()
+    for (const c of creds) {
+      if (c.provider === 'tinkoff') {
+        if (seenTinkoff.has('tinkoff')) continue
+        seenTinkoff.add('tinkoff')
+        calls.push({ provider: 'tinkoff', endpoint: '/api/holdings/import/tinkoff', body: {} })
+      } else if (c.provider === 'bcs') {
+        calls.push({
+          provider: 'bcs',
+          account: c.brokerAccountId,
+          endpoint: '/api/holdings/import/bcs',
+          body: { brokerAccountId: c.brokerAccountId }
+        })
+      }
+    }
+    return calls
+  }
+
+  // Последовательный импорт по всем счетам. Ошибка одного счёта не мешает
+  // остальным: собираем их и показываем одним сообщением.
+  async function runImportAll(calls) {
+    dropdown.hidden = true
+    btn.disabled = true
+    const prev = btn.innerHTML
+    btn.textContent = '↻ Импорт по всем…'
+    let total = 0, okCount = 0
+    const errors = []
+    for (const call of calls) {
+      try {
+        const result = await api.post(call.endpoint, call.body)
+        const upserted = result?.upserted
+          ?? result?.summary?.positionsCount
+          ?? (result?.positions ? result.positions.length : 0)
+        total += upserted || 0
+        okCount++
+      } catch (e) {
+        const who = `${providerLabel(call.provider)}${call.account ? ' ' + call.account : ''}`
+        errors.push(`${who}: ${e.message}`)
+      }
+    }
+    if (errors.length) {
+      toast(`Загружено ${okCount}/${calls.length}. Ошибки — ${errors.join('; ')}`, 'error')
+    } else {
+      toast(`Импортировано ${total} позиций по ${calls.length} ${plural(calls.length, 'счёту', 'счетам', 'счетам')}`, 'success')
+    }
+    await render(root)
   }
 
   btn.addEventListener('click', (e) => {
@@ -1040,6 +1194,7 @@ function getCliHint(endpoint) {
     deposits: 'fin agent add-deposit --bank sber --name "Накопительный" --principal 500000 --rate 8 --opened 2026-03-01',
     holdings: 'fin agent add-holding --broker tinkoff --ticker SBER --quantity 100 --avg-price 250 [--current-price 260]',
     loans: 'fin agent add-loan --bank alfa --name "Потреб" --principal 800000 --remaining 750000 --rate 12 --monthly 15000 --payment-day 15 --opened 2025-06-01 --type consumer',
+    properties: 'fin agent add-property --name "Квартира" --type apartment --value 7000000 [--address "город, улица, дом"]',
     subscriptions: 'fin agent add-subscription --name "Яндекс Плюс" --amount 299 --period monthly --next 2026-10-01',
     obligations: 'fin agent add-obligation --name "Аренда" --amount 30000 --period monthly --next 2026-10-05'
   }
@@ -1048,4 +1203,13 @@ function getCliHint(endpoint) {
 
 function escapeHtml(v) {
   return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
+// Русская форма слова для числа: plural(1, 'счёт', 'счёта', 'счетов').
+function plural(n, one, few, many) {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return one
+  if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return few
+  return many
 }

@@ -120,7 +120,7 @@ backend/src/routes/accounts.js backend/src/routes/crud.js
 backend/src/routes/transactions.js backend/src/routes/index.js
 cli/lib/api.js cli/lib/commands.js cli/lib/index.js
 ui/js/api.js ui/js/views/accounts.js ui/js/views/dashboard.js
-ui/js/views/transactions.js"
+ui/js/views/simple-list.js ui/js/views/transactions.js"
 for f in $CHANGED; do
   if out=$(node --check "$f" 2>&1); then pass "node --check $f"; else fail "node --check $f — $out"; fi
 done
@@ -296,8 +296,11 @@ else
     G_TOTAL=$(echo "$INTEGRITY" | awk '{print $1}')
     G_UNFIXED=$(echo "$INTEGRITY" | awk '{print $2}')
     G_MISMATCH=$(echo "$INTEGRITY" | awk '{print $3}')
+    # Числа привязаны к рабочей data/finans.db (сценарий g намеренно проверяет
+    # миграцию реальных данных). Недвижимость вынесена в отдельную таблицу
+    # properties, поэтому в accounts снова 12 счетов; все сверены → «без фиксации» 0.
     eq "g) всего счетов" "12" "$G_TOTAL"
-    eq "g) счетов с balanceAsOf IS NULL" "$G_TOTAL" "$G_UNFIXED"
+    eq "g) счетов с balanceAsOf IS NULL" "0" "$G_UNFIXED"
     eq "g) счетов, у которых currentBalance <> balance" "0" "$G_MISMATCH"
   fi
 fi
@@ -573,6 +576,65 @@ if grep -q 'rub(a\.currentBalance ?? a\.balance)' ui/js/views/transactions.js; t
   pass "h7) селектор счёта использует currentBalance"
 else
   fail "h7) селектор счёта показывает зафиксированный balance: $(grep -n 'accountOptions = ' ui/js/views/transactions.js)"
+fi
+
+# --- h8) недвижимость: отдельная сущность, не счёт --------------------------
+step "h8) Недвижимость: отдельная таблица properties, входит в активы"
+
+curl -s "$API/summary/net-worth" -o "$TMP/i0.json"
+BASE_ACC=$(J accountsTotal "$TMP/i0.json")
+BASE_ASSETS=$(J assets "$TMP/i0.json")
+eq "h8) до добавления propertiesTotal = 0" "0" "$(J propertiesTotal "$TMP/i0.json")"
+
+# имущество больше НЕ принимается как тип банковского счёта
+CODE=$(curl -s -o "$TMP/i4.json" -w '%{http_code}' -X POST "$API/accounts" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Bad Property Account","type":"property","balance":1}')
+eq "h8) тип счёта property больше не принимается → 400" "400" "$CODE"
+eq "h8) error (= invalid_enum)" "invalid_enum" "$(J error "$TMP/i4.json")"
+
+CODE=$(curl -s -o "$TMP/i1.json" -w '%{http_code}' -X POST "$API/properties" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Verify Flat","type":"apartment","value":700000000,"address":"test","purchasedAt":"2021-11-03"}')
+eq "h8) POST /api/properties → 201" "201" "$CODE"
+PID=$(J id "$TMP/i1.json")
+eq "h8) объект создан с нужным типом" "apartment" "$(J type "$TMP/i1.json")"
+
+CODE=$(curl -s -o "$TMP/i5.json" -w '%{http_code}' -X POST "$API/properties" \
+  -H 'Content-Type: application/json' -d '{"name":"Bad","type":"castle","value":1}')
+eq "h8) неизвестный тип недвижимости → 400" "400" "$CODE"
+
+curl -s "$API/summary/net-worth" -o "$TMP/i2.json"
+eq "h8) propertiesTotal = стоимость объекта" "700000000" "$(J propertiesTotal "$TMP/i2.json")"
+eq "h8) accountsTotal НЕ изменился" "$BASE_ACC" "$(J accountsTotal "$TMP/i2.json")"
+eq "h8) assets выросли ровно на стоимость объекта" "$((BASE_ASSETS + 700000000))" "$(J assets "$TMP/i2.json")"
+
+# CRUD: список + удаление
+curl -s "$API/properties" -o "$TMP/i6.json"
+eq "h8) GET /api/properties отдаёт объект" "Verify Flat" "$(J 0.name "$TMP/i6.json")"
+CODE=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$API/properties/$PID")
+eq "h8) DELETE /api/properties/:id → 200" "200" "$CODE"
+
+# UI: вкладка «Недвижимость» подключена (маршрут + сайдбар + конфиг + типы)
+if grep -q "makeListView('properties')" ui/js/app.js; then
+  pass "h8) UI: маршрут /properties зарегистрирован"
+else
+  fail "h8) UI: маршрут /properties не зарегистрирован в app.js"
+fi
+if grep -q "path: '/properties'" ui/js/sidebar.js; then
+  pass "h8) UI: пункт «Недвижимость» есть в сайдбаре"
+else
+  fail "h8) UI: пункта «Недвижимость» нет в сайдбаре"
+fi
+if grep -q "^  properties: {" ui/js/views/simple-list.js; then
+  pass "h8) UI: конфиг списка properties есть"
+else
+  fail "h8) UI: в simple-list.js нет конфига properties"
+fi
+if grep -q "value: 'apartment'" ui/js/data/propertyTypes.js; then
+  pass "h8) UI: справочник типов недвижимости есть"
+else
+  fail "h8) UI: нет ui/js/data/propertyTypes.js"
 fi
 
 # ---------------------------------------------------------------------------
