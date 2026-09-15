@@ -234,10 +234,21 @@ export async function render(root) {
         </table>
       </div>
       <div class="import-actions">
+        <button class="btn btn-sm" id="import-check-all" title="Отметить все новые операции">☑ Выбрать все</button>
+        <button class="btn btn-sm" id="import-uncheck-all" title="Снять все отметки">☐ Снять все</button>
         <button class="btn btn-primary" id="import-confirm">Импортировать выбранные</button>
         <span id="import-actions-summary" class="import-filename"></span>
       </div>
     `
+
+    // Bulk-выбор: «Выбрать все» / «Снять все» — только для не-disabled
+    // чекбоксов (дубли alreadyImported не трогаем, чтобы случайно не
+    // переимпортировать уже существующее).
+    const setAllCheckboxes = (checked) => {
+      el.querySelectorAll('.row-check:not(:disabled)').forEach(cb => { cb.checked = checked })
+    }
+    document.getElementById('import-check-all').addEventListener('click', () => setAllCheckboxes(true))
+    document.getElementById('import-uncheck-all').addEventListener('click', () => setAllCheckboxes(false))
 
     // События строк превью.
     el.querySelectorAll('.row-account').forEach(sel => {
