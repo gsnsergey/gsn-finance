@@ -96,6 +96,13 @@ export async function render(root) {
     })
   }
 
+  // Опции для select'ов счёта/категории. Подняты на уровень render(), чтобы
+  // updateCategoryCell() мог их переиспользовать без перерисовки всей таблицы.
+  const accountOpts = id => `<option value="">— выбрать —</option>` +
+    state.accounts.map(a => `<option value="${escapeHtml(a.id)}"${id === a.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('')
+  const categoryOpts = id => `<option value="">— без категории —</option>` +
+    state.categories.map(c => `<option value="${escapeHtml(c.id)}"${id === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')
+
   async function handleFile(file) {
     state.file = file
     document.getElementById('import-filename').textContent = file.name + ` (${(file.size / 1024).toFixed(1)} KB)`
@@ -103,10 +110,13 @@ export async function render(root) {
     document.getElementById('import-table').innerHTML = '<div class="loading">Разбираю PDF…</div>'
     state.preview = null
     state.edits.clear()
+    state.checked = new Map()    // явно проставленные галочки пользователем
 
     try {
       const preview = await postPdf('/api/import/alfa/preview', file)
       state.preview = preview
+      // Defaults: новые операции — checked, дубли — unchecked (они и так disabled).
+      preview.operations.forEach((op, i) => state.checked.set(i, !op.alreadyImported))
       renderSummary()
       renderTable()
     } catch (e) {
@@ -149,11 +159,6 @@ export async function render(root) {
       </div>`
       return
     }
-
-    const accountOpts = id => `<option value="">— выбрать —</option>` +
-      state.accounts.map(a => `<option value="${escapeHtml(a.id)}"${id === a.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('')
-    const categoryOpts = id => `<option value="">— без категории —</option>` +
-      state.categories.map(c => `<option value="${escapeHtml(c.id)}"${id === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')
 
     el.innerHTML = `
       <div class="table-wrap">
@@ -198,7 +203,7 @@ export async function render(root) {
               const saveMerchant = op.merchantName
               return `
                 <tr class="${rowClass}" data-idx="${i}">
-                  <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : 'checked'} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
+                  <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : (state.checked.get(i) !== false ? 'checked' : '')} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
                   <td>${escapeHtml(op.date)}${holdBadge ? ' ' + holdBadge : ''}</td>
                   <td><code>${escapeHtml(op.mcc || '—')}</code></td>
                   <td class="merchant-cell">${escapeHtml(op.merchantName || op.description || '—')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
@@ -245,12 +250,20 @@ export async function render(root) {
     // чекбоксов (дубли alreadyImported не трогаем, чтобы случайно не
     // переимпортировать уже существующее).
     const setAllCheckboxes = (checked) => {
-      el.querySelectorAll('.row-check:not(:disabled)').forEach(cb => { cb.checked = checked })
+      el.querySelectorAll('.row-check:not(:disabled)').forEach(cb => {
+        cb.checked = checked
+        state.checked.set(Number(cb.dataset.idx), checked)
+      })
     }
     document.getElementById('import-check-all').addEventListener('click', () => setAllCheckboxes(true))
     document.getElementById('import-uncheck-all').addEventListener('click', () => setAllCheckboxes(false))
 
     // События строк превью.
+    el.querySelectorAll('.row-check').forEach(cb => {
+      cb.addEventListener('change', e => {
+        state.checked.set(Number(e.target.dataset.idx), e.target.checked)
+      })
+    })
     el.querySelectorAll('.row-account').forEach(sel => {
       sel.addEventListener('change', e => {
         setEdited(Number(e.target.dataset.idx), { accountId: e.target.value })
@@ -271,8 +284,10 @@ export async function render(root) {
         } else {
           setEdited(idx, { categoryId: newCat })
         }
-        // Перерисовать строку, чтобы показать/обновить чекбокс «сохранить как правило».
-        renderTable()
+        // Точечное обновление: только ячейка категории (показать/скрыть
+        // чекбокс «сохранить как правило»). НЕ перерисовываем всю таблицу —
+        // иначе сбросятся все галочки .row-check, выбранные пользователем.
+        updateCategoryCell(idx)
       })
     })
     el.querySelectorAll('.row-save-rule').forEach(cb => {
@@ -281,6 +296,42 @@ export async function render(root) {
       })
     })
     document.getElementById('import-confirm').addEventListener('click', doImport)
+  }
+
+  // Точечный апдейт ячейки категории: перерисовать select + при необходимости
+  // добавить/убрать блок «сохранить как правило». Не трогает остальные строки.
+  function updateCategoryCell(idx) {
+    const row = el.querySelector(`tr[data-idx="${idx}"]`)
+    if (!row) return
+    const cell = row.querySelector('.category-cell')
+    if (!cell) return
+    const op = state.preview.operations[idx]
+    const categoryId = getEdited(idx, 'categoryId', op.suggestedCategoryId || '')
+    const saveAsRule = getEdited(idx, 'saveAsRule', false)
+    const saveMcc = op.mcc
+    const saveMerchant = op.merchantName
+    const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
+    const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
+    cell.innerHTML = `
+      <select class="row-category" data-idx="${idx}">${categoryOpts(categoryId)}</select>
+      ${showSave ? `
+        <label class="hint-warn save-rule">
+          <input type="checkbox" class="row-save-rule" data-idx="${idx}" ${saveAsRule ? 'checked' : ''}>
+          Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
+        </label>
+      ` : ''}
+    `
+    // Перенавешиваем обработчики на новые элементы ячейки.
+    cell.querySelector('.row-category').addEventListener('change', e => {
+      const newCat = e.target.value
+      const m = newCat === (op.suggestedCategoryId || '')
+      const k = !!(op.mcc || op.merchantName)
+      if (newCat && !m && k) setEdited(idx, { categoryId: newCat, saveAsRule: true })
+      else setEdited(idx, { categoryId: newCat })
+      updateCategoryCell(idx)
+    })
+    const sr = cell.querySelector('.row-save-rule')
+    if (sr) sr.addEventListener('change', e => setEdited(idx, { saveAsRule: e.target.checked }))
   }
 
   async function doImport() {
