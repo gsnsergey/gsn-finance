@@ -435,6 +435,15 @@ const dash = await import(`${ROOT}/ui/js/views/dashboard.js`)
 const root2 = { innerHTML: '' }
 await dash.render(root2)
 check('дашборд: «На картах» по currentBalance (1049,50)', money(root2.innerHTML, '1049,50'))
+// Раскладка 5 + 5: ничего не улетает на третью строку. Блоков ровно два,
+// в каждом по 5 карточек-ссылок (структурная проверка, без браузера).
+const cardRe = /class="card card-link/g
+const cardCount = (h) => (h.match(cardRe) || []).length
+const blocks = root2.innerHTML.split('<div class="cards">').slice(1)
+check('дашборд: всего 10 карточек-показателей', cardCount(root2.innerHTML) === 10)
+check('дашборд: 2 блока по 5 карточек', blocks.length === 2 && blocks.every(b => cardCount(b) === 5))
+check('дашборд: карточка «Обязательства / мес» из вкладки обязательств', root2.innerHTML.includes('Обязательства / мес'))
+check('дашборд: нет карточки «Обязательства всего»', !root2.innerHTML.includes('Обязательства всего'))
 
 process.exit(bad ? 1 : 0)
 EOF

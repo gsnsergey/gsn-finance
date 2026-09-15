@@ -55,11 +55,15 @@ export async function render(root) {
       <div class="card-sub">${sub}</div>
     </a>`
 
+  // Ровно 5 карточек в каждом блоке → 5 + 5 = 2 строки (см. .cards в styles.css).
+  // Недвижимость показывается всегда (как «Портфель» при нуле): иначе при пустой
+  // вкладке карточек стало бы 9 и второй блок снова разъехался бы.
   root.innerHTML = `
     <div class="cards">
       ${cardLink('#/obligations', nwClass, 'Капитал', rub(nw.netWorth), 'Активы − обязательства')}
       ${cardLink('#/deposits', '', 'Вклады', rub(nw.depositsTotal), 'Открытые депозиты')}
       ${cardLink('#/portfolio', '', 'Портфель', rub(nw.holdingsTotal), (nw.holdingsTotal || 0) === 0 ? 'Нет позиций' : 'Стоимость (по последнему импорту)')}
+      ${cardLink('#/properties', '', 'Недвижимость', rub(propertiesTotal), propertiesTotal > 0 ? 'Имущество в активах' : 'Нет объектов')}
       ${cardLink('#/loans', 'danger', 'Кредиты (остаток)', rub(nw.loansRemaining), 'Сколько должны')}
     </div>
 
@@ -67,7 +71,6 @@ export async function render(root) {
       ${cardLink('#/subscriptions', '', 'Подписки / мес', rub(subsMonthly), `${subs.filter(s => s.active).length} активных`)}
       ${cardLink('#/obligations', 'danger', 'Обязательства / мес', rub(obligationsMonthly), 'Из вкладки «Обязательства»')}
       ${cardLink('#/accounts', 'accent', 'На картах', rub(accountsTotal), 'Все счета, с учётом операций')}
-      ${propertiesTotal > 0 ? cardLink('#/properties', '', 'Недвижимость', rub(propertiesTotal), 'Имущество в активах') : ''}
       ${cardLink(`#/transactions?${todayQ}&type=income`, 'success', 'Доход сегодня', rub(today.incomeToday), `за ${today.date}`)}
       ${cardLink(`#/transactions?${todayQ}&type=expense`, 'danger', 'Расход сегодня', rub(today.expenseToday), `за ${today.date}`)}
     </div>

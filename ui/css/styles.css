@@ -140,9 +140,13 @@ html, body {
 }
 
 /* === Cards === */
+/* Дашборд: ровно 5 показателей в строке, каждый блок — 5 карточек, итого 2 строки.
+   Раньше стоял auto-fit minmax(200px, 1fr): шестая карточка второго блока
+   не влезала в строку и оставалась одна на третьей. Фиксированные 5 колонок
+   делают раскладку 5+5 независимой от ширины окна (см. брейкпоинты ниже). */
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -1104,9 +1108,17 @@ html, body {
 .dashboard-metric-value { font-variant-numeric: tabular-nums; font-weight: 500; }
 
 /* === Responsive === */
+/* Дашборд: на узких экранах 5 колонок слишком мелкие — 3, затем 2 и 1. */
+@media (max-width: 1280px) {
+  .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 @media (max-width: 768px) {
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .topbar { padding: 14px 16px; }
   .view { padding: 16px; }
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .cards { grid-template-columns: minmax(0, 1fr); }
 }
