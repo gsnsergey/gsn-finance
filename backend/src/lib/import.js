@@ -17,7 +17,8 @@ import { v4 as uuid } from 'uuid'
 import { parseAlfaStatement } from './parsers/alfa.js'
 import { parseAlfaCsvStatement, OWN_TRANSFER_CATEGORY } from './parsers/alfa-csv.js'
 import { parseTochkaStatement } from './parsers/tochka.js'
-import { applyRulesToOperations } from './mapping.js'
+import { applyRulesToOperations, applyRulesToResolvedOperations } from './mapping.js'
+import { isFixed, signedDelta } from '../balance.js'
 
 /**
  * Synthetic externalRef для операций без ID (платежи через Альфа-систему:
@@ -48,19 +49,47 @@ function resolveAccountCards(db, panMasks) {
 }
 
 /**
+ * Старый ключ Точки → алиас для поиска уже импортированных операций.
+ *
+ * До этого ключ был `tchk-doc-{Номер документа}` — не уникальный между счетами
+ * (и потому давал ложные дубли). Теперь ключ Точки включает счёт и дату
+ * (`tchk-{account}-{yyyymmdd}-doc-{N}`), но в БД остались строки со старым
+ * ключом: при дедупе их надо находить по прежнему виду, иначе повторный импорт
+ * старой выписки создаст дубликаты.
+ *
+ * @returns {string|null} legacy-ключ либо null, если ref не в новом формате
+ */
+function legacyExternalRef(ref) {
+  const m = /^tchk-([^-]+)-(\d{8})-doc-(.+)$/.exec(ref || '')
+  return m ? `tchk-doc-${m[3]}` : null
+}
+
+/**
  * Загружает уже сохранённые операции по externalRef. Нужно, чтобы в превью
  * дубли показывали РЕАЛЬНЫЕ счёт/категорию/вид из БД, а не выглядели
  * «незаполненными» (иначе строка «уже импортирована», но счёт пустой).
- * @returns {Map<string, Array<{accountId, categoryId, type, amount}>>}
+ *
+ * Помимо нового ключа запрашиваем и legacy-алиас (tchk-doc-…) — строки,
+ * импортированные до смены формата ключа Точки.
+ *
+ * @returns {Map<string, Array<{accountId, categoryId, type, amount, date, transferDirection}>>}
  */
 function loadExistingByRef(db, refs) {
-  const unique = [...new Set(refs.filter(Boolean))]
-  if (!unique.length) return new Map()
+  const unique = new Set()
+  for (const ref of refs) {
+    if (!ref) continue
+    unique.add(ref)
+    const legacy = legacyExternalRef(ref)
+    if (legacy) unique.add(legacy)
+  }
+  if (!unique.size) return new Map()
+  const list = [...unique]
   const rows = db.prepare(`
-    SELECT externalRef, accountId, categoryId, type, amount
+    SELECT externalRef, accountId, categoryId, type, amount, date, transferDirection
       FROM transactions
-     WHERE externalRef IN (${unique.map(() => '?').join(',')})
-  `).all(...unique)
+     WHERE externalRef IN (${list.map(() => '?').join(',')})
+     ORDER BY rowid
+  `).all(...list)
   const map = new Map()
   for (const r of rows) {
     if (!map.has(r.externalRef)) map.set(r.externalRef, [])
@@ -69,16 +98,68 @@ function loadExistingByRef(db, refs) {
   return map
 }
 
+/** Строки, сохранённые по этому ref: сначала новый ключ, затем legacy-алиас. */
+function existingRowsFor(existingByRef, ref) {
+  const direct = existingByRef.get(ref)
+  if (direct) return direct
+  const legacy = legacyExternalRef(ref)
+  return legacy ? existingByRef.get(legacy) : undefined
+}
+
+/**
+ * Подтверждает дубль по СОДЕРЖИМОМУ, а не только по externalRef.
+ *
+ * Совпадения одного ключа мало: «Номер документа» Точки не уникален (см.
+ * legacyExternalRef), поэтому ref может принадлежать чужой операции. Дублем
+ * считаем строку, у которой совпали дата, сумма и (когда счёт известен) счёт.
+ * Иначе новая операция молча помечалась «уже в БД», хотя её в базе нет.
+ *
+ * @returns {Array|null} строки-дубли (для existingFieldsFor) либо null
+ */
+function matchExisting(rows, op) {
+  if (!rows || !rows.length) return null
+  const amount = Math.abs(op.amount)
+  const byContent = rows.filter(r => r.date === op.date && r.amount === amount)
+  if (!byContent.length) return null
+
+  if (op.type === 'transfer') {
+    const src = op.resolvedAccountId || null
+    const dst = op.transferAccountId || null
+    const out = byContent.find(r => r.transferDirection === 'out' && (!src || r.accountId === src))
+    const inc = byContent.find(r => r.transferDirection === 'in' && (!dst || r.accountId === dst) && r !== out)
+    if (out && inc) return [out, inc]
+    // Строки до миграции 019 — transferDirection пустой: различаем ноги по счёту.
+    const a = src ? byContent.find(r => r.accountId === src) : null
+    const b = dst ? byContent.find(r => r.accountId === dst && r !== a) : null
+    if (a && b) return [a, b]
+    return null
+  }
+
+  if (op.resolvedAccountId) {
+    const row = byContent.find(r => r.accountId === op.resolvedAccountId)
+    return row ? [row] : null
+  }
+  // Счёт не зарезолвлен: ref+дата+сумма совпали — считаем дублем. Для CSV
+  // Альфы ref уже включает номер счёта, для Точки это редкий случай.
+  return [byContent[0]]
+}
+
 /**
  * Данные для дубля: у обычной операции — единственная запись, у transfer —
- * две половины (расход = источник, приход = получатель).
+ * две половины (out = источник, in = получатель).
+ *
+ * Направление берём из transferDirection; для строк, импортированных до
+ * миграции 019, колонка пустая — тогда fallback на порядок rowid: applyImport
+ * вставляет источник первым, поэтому первая строка группы — источник.
  * @returns {{existingAccountId?, existingTransferAccountId?, existingCategoryId?, existingType?}}
  */
 function existingFieldsFor(rows, type) {
   if (!rows || !rows.length) return {}
   if (type === 'transfer') {
-    const source = rows.find(r => r.amount < 0) || rows[0]
-    const target = rows.find(r => r.amount > 0) || null
+    const source = rows.find(r => r.transferDirection === 'out') || rows[0]
+    const target = rows.find(r => r.transferDirection === 'in')
+      || rows.find(r => r !== source)
+      || null
     return {
       existingAccountId: source ? source.accountId : null,
       existingTransferAccountId: target ? target.accountId : null,
@@ -123,7 +204,13 @@ export function buildAlfaPreview(operations, db) {
   const result = withMapping.map(op => {
     const card = cardByMask.get(op.panMask)
     const resolvedAccountId = card ? card.accountId : null
-    const existingRows = existingByRef.get(op.externalRef)
+    const existingRows = matchExisting(existingRowsFor(existingByRef, op.externalRef), {
+      date: op.date,
+      amount: op.amount,
+      type: op.type,
+      resolvedAccountId,
+      transferAccountId: null
+    })
     const dup = !!existingRows
     if (dup) alreadyImported++
     // Дубли не считаем «без счёта»: их всё равно не импортируют.
@@ -160,8 +247,10 @@ export function buildAlfaPreview(operations, db) {
     }
   })
 
+  // Счёт-специфичные правила учитываем ПОСЛЕ резолва счёта: до него мы не знаем,
+  // к какому счёту относится операция, а правила бывают привязаны к счёту.
   return {
-    operations: result,
+    operations: applyRulesToResolvedOperations(result),
     totals: { found: result.length, alreadyImported, unresolvedAccount }
   }
 }
@@ -170,15 +259,28 @@ export function buildAlfaPreview(operations, db) {
  * Записывает операции в БД с дедупом по externalRef.
  *
  * Поддерживает 3 типа:
- *   - 'expense'  → amount = -Math.abs(amount), одна запись, баланс ↓
- *   - 'income'   → amount = +Math.abs(amount), одна запись, баланс ↑
- *   - 'transfer' → ДВЕ записи с общим externalRef: −X на accountId
- *                  (источник, баланс ↓), +X на transferAccountId
- *                  (получатель, баланс ↑). Категория для transfer не
- *                  задаётся (категории — для income/expense).
+ *   - 'expense'  → amount = +absAmount (положительный), баланс ↓ (если счёт не зафиксирован)
+ *   - 'income'   → amount = +absAmount, баланс ↑ (если счёт не зафиксирован)
+ *   - 'transfer' → ДВЕ записи с общим externalRef, обе amount = +absAmount:
+ *                  источник (accountId, transferDirection='out', баланс ↓)
+ *                  и получатель (transferAccountId, transferDirection='in',
+ *                  баланс ↑) — только у НЕфиксированных счетов.
+ *                  Категория для transfer не задаётся (категории — для income/expense).
  *
- * Дедуп: если в БД уже есть ЛЮБАЯ запись с таким externalRef, обе записи
- * transfer считаются уже импортированными и пропускаются целиком.
+ * Инвариант amount: `transactions.amount` ВСЕГДА положителен (>= 0), знак
+ * операции берётся из `type` и (для transfer) `transferDirection`
+ * (см. balance.js:signedDelta / CURRENT_BALANCE_EXPR).
+ * Парсеры отдают знак по-разному — нормализуем Math.abs здесь.
+ *
+ * Зафиксированный остаток: если у счёта есть balanceAsOf (isFixed), баланс НЕ
+ * трогаем инкрементом — balance там снимок на дату фиксации, а движения после
+ * неё учитываются формулами currentBalanceOf/CURRENT_BALANCE_EXPR. Остальные
+ * пути (routes/transactions.js) делают так же.
+ *
+ * Дедуп: запись пропускается, если в БД уже есть операция с тем же externalRef
+ * И совпадающими датой/суммой/счётом (matchExisting). Одного ref недостаточно:
+ * «Номер документа» Точки не уникален между счетами. Для transfer проверяются
+ * обе ноги — источник и получатель.
  *
  * @param {Array<ImportItem>} items  см. routes/import.js
  * @param {object} db               better-sqlite3 instance
@@ -196,19 +298,29 @@ export function buildAlfaPreview(operations, db) {
  *     date: 'YYYY-MM-DD',
  *     mcc?: string,
  *     merchantName?: string,
- *     bankSource?: 'alfa'|'tochka'   // влияет на префикс комментария
+ *     bankSource?: 'alfa'|'tochka',  // влияет на префикс комментария
+ *     userComment?: string,          // примечание пользователя из превью
+ *     rawSource?: string             // оригинальная строка выписки
  *   }
  */
 export function applyImport(items, db) {
   const now = new Date().toISOString()
-  const findExisting = db.prepare(`SELECT id FROM transactions WHERE externalRef = ? LIMIT 1`)
+  // Ищем и по новому ключу, и по legacy-алиасу Точки (tchk-doc-…) — строки,
+  // импортированные до смены формата ключа. Совпадение ref ещё не дубль:
+  // matchExisting сверяет дату/сумму/счёт.
+  const findExisting = db.prepare(`
+    SELECT id, accountId, type, amount, date, transferDirection
+      FROM transactions WHERE externalRef IN (?, ?)
+  `)
   const insert = db.prepare(`
     INSERT INTO transactions
-      (id, accountId, type, amount, currency, categoryId, date, comment, source, externalRef, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'import', ?, ?, ?)
+      (id, accountId, type, amount, currency, categoryId, date, comment, source, externalRef, rawSource, transferDirection, createdAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'import', ?, ?, ?, ?, ?)
   `)
   const updateBalance = db.prepare(`UPDATE accounts SET balance = balance + ?, updatedAt = ? WHERE id = ?`)
-  const findAccount = db.prepare(`SELECT id FROM accounts WHERE id = ? AND archived = 0`)
+  // balance/balanceAsOf нужны, чтобы отличить счёт с фиксацией (isFixed):
+  // у такого счёта balance — снимок на дату, инкремент запрещён.
+  const findAccount = db.prepare(`SELECT id, balance, balanceAsOf FROM accounts WHERE id = ? AND archived = 0`)
   const findCategory = db.prepare(`SELECT id FROM categories WHERE id = ?`)
 
   const run = db.transaction(() => {
@@ -217,9 +329,16 @@ export function applyImport(items, db) {
     for (const it of items) {
       const ref = it.externalRef || makeSyntheticRef(it)
 
-      // Один findExisting достаточно — для transfer обе записи создаются
-      // с одним ref; если хоть одна существует, обе считаются импортированными.
-      const existing = findExisting.get(ref)
+      // Дубль подтверждаем по содержимому: один и тот же ref (напр. «Номер
+      // документа» Точки) бывает у разных операций. Для transfer обе ноги
+      // создаются с одним ref; проверяем источник и получателя.
+      const existing = matchExisting(findExisting.all(ref, legacyExternalRef(ref) || ''), {
+        date: it.date,
+        amount: it.amount,
+        type: it.type,
+        resolvedAccountId: it.accountId,
+        transferAccountId: it.transferAccountId
+      })
       if (existing) {
         result.skipped++
         continue
@@ -262,60 +381,71 @@ export function applyImport(items, db) {
         }
       }
 
+      // Знак операции берётся из type, а amount хранится положительным
+      // (инвариант всего остального кода). Парсеры отдают разный знак, поэтому
+      // нормализуем модуль; влияние на баланс считает signedDelta.
       const absAmount = Math.abs(Math.round(it.amount))
+      const delta = signedDelta(it.type, absAmount)
       const currency = it.currency || 'RUB'
       const bankPrefix = it.bankSource === 'tochka' ? 'Импорт Точка' : 'Импорт Альфа'
-
       // Комментарий. transfer — короткий, без категории/MCC (там другая природа).
-      let comment
+      let autoComment
       if (isTransfer) {
         const parts = []
         if (it.merchantName) parts.push(it.merchantName)
-        comment = parts.length ? `[${bankPrefix} · перевод] ${parts.join(' / ')}` : `[${bankPrefix} · перевод]`
+        autoComment = parts.length ? `[${bankPrefix} · перевод] ${parts.join(' / ')}` : `[${bankPrefix} · перевод]`
       } else {
         const parts = []
         if (it.mcc) parts.push(`MCC ${it.mcc}`)
         if (it.merchantName) parts.push(it.merchantName)
-        comment = parts.length ? `[${bankPrefix}] ${parts.join(' / ')}` : bankPrefix
+        autoComment = parts.length ? `[${bankPrefix}] ${parts.join(' / ')}` : bankPrefix
       }
-
-      // Знаки суммы по типу:
-      //   expense  → −absAmount (списание со счёта, баланс ↓)
-      //   income   → +absAmount (поступление на счёт, баланс ↑)
-      //   transfer → источник: −absAmount (баланс ↓), получатель: +absAmount (баланс ↑)
-      const sign = it.type === 'expense' ? -1 : +1
-      const signedSource = sign * absAmount
+      // Примечание пользователя (введено в превью) идёт первым и отделяется
+      // разделителем от авто-комментария банка — обе части сохраняем, чтобы
+      // не терять ни своё пояснение, ни разбор выписки. Только trim: пустое
+      // или пробельное примечание не должно давать « · » без левой части.
+      const userComment = String(it.userComment || '').trim()
+      const comment = userComment ? `${userComment} · ${autoComment}` : autoComment
+      // Оригинальная строка выписки — одинаковая для обеих ног transfer.
+      const rawSource = it.rawSource ?? null
 
       try {
         if (isTransfer) {
-          // Запись 1: источник (−X). Знак amount отрицательный — для истории и
-          // для будущей формулы CURRENT_BALANCE_EXPR, если её расширят.
-          // Сейчас balance.js:signedDelta возвращает 0 для transfer, и
-          // accounts.balance мы НЕ трогаем (закомно): реальный баланс
-          // считается как balance + Σ(income/expense), transfer — бухгалтерская
-          // проводка «откуда → куда», она не должна задним числом искажать
-          // зафиксированный остаток (balanceAsOf). Если пользователь хочет
-          // отразить перемещение в балансе — он сверет счёт через /reconcile.
+          // Обе ноги хранятся положительными (amount = +absAmount) — знак
+          // операции задаёт transferDirection ('out' — источник, 'in' —
+          // получатель), а не amount. transferDirection пишется в БД, чтобы
+          // формулы баланса (signedDelta/CURRENT_BALANCE_EXPR) могли посчитать
+          // перевод и после импорта.
           const idSource = uuid()
           insert.run(
-            idSource, it.accountId, 'transfer', signedSource, currency, null, it.date, comment,
-            ref, now, now
+            idSource, it.accountId, 'transfer', absAmount, currency, null, it.date, comment,
+            ref, rawSource, 'out', now, now
           )
           result.created++
           result.createdIds.push(idSource)
 
-          // Запись 2: получатель (+X). Те же ограничения: balance не двигаем.
+          // Запись 2: получатель.
           const idTarget = uuid()
           insert.run(
             idTarget, it.transferAccountId, 'transfer', absAmount, currency, null, it.date, comment,
-            ref, now, now
+            ref, rawSource, 'in', now, now
           )
           result.created++
           result.createdIds.push(idTarget)
+
+          // У нефиксированного источника balance -= abs, у нефиксированного
+          // получателя += abs. У счёта с фиксацией balance — снимок на
+          // balanceAsOf, движения после него учитывают формулы
+          // currentBalanceOf/CURRENT_BALANCE_EXPR, поэтому инкремент запрещён.
+          if (!isFixed(account)) updateBalance.run(-absAmount, now, it.accountId)
+          if (!isFixed(targetAccount)) updateBalance.run(absAmount, now, it.transferAccountId)
         } else {
           const id = uuid()
-          insert.run(id, it.accountId, it.type, signedSource, currency, it.categoryId || null, it.date, comment, ref, now, now)
-          updateBalance.run(signedSource, now, it.accountId)
+          insert.run(id, it.accountId, it.type, absAmount, currency, it.categoryId || null, it.date, comment, ref, rawSource, null, now, now)
+          // У счёта с фиксацией balance — снимок на balanceAsOf; движения после
+          // неё учитываются формулами currentBalanceOf/CURRENT_BALANCE_EXPR,
+          // поэтому инкремент запрещён (как в routes/transactions.js).
+          if (!isFixed(account) && delta !== 0) updateBalance.run(delta, now, it.accountId)
           result.created++
           result.createdIds.push(id)
         }
@@ -424,10 +554,6 @@ export function buildTochkaPreview(operations, db) {
   let unresolvedAccount = 0
   let transferCount = 0
   const result = withMapping.map(op => {
-    const existingRows = existingByRef.get(op.externalRef)
-    const dup = !!existingRows
-    if (dup) alreadyImported++
-
     // Резолв по номеру счёта из выписки.
     let resolvedAccountId = null
     let resolvedAccountName = null
@@ -462,6 +588,18 @@ export function buildTochkaPreview(operations, db) {
         resolvedAccountName = payerMatch.name
       }
     }
+
+    // Дедуп: ref + содержимое (дата/сумма/счёт). Счёт уже зарезолвлен, поэтому
+    // чужая операция с тем же «Номером документа» дублем не считается.
+    const existingRows = matchExisting(existingRowsFor(existingByRef, op.externalRef), {
+      date: op.date,
+      amount: op.amount,
+      type: op.type,
+      resolvedAccountId,
+      transferAccountId: resolvedTransferAccountId
+    })
+    const dup = !!existingRows
+    if (dup) alreadyImported++
 
     // unresolved — это когда ни источник, ни (для transfer) получатель
     // не зарезолвились. Для transfer оба обязательны; для income/expense — только источник.
@@ -515,8 +653,9 @@ export function buildTochkaPreview(operations, db) {
     }
   })
 
+  // Счёт-специфичные правила учитываем ПОСЛЕ резолва счёта (см. mapping.js).
   return {
-    operations: result,
+    operations: applyRulesToResolvedOperations(result),
     totals: { found: result.length, alreadyImported, unresolvedAccount, transferCount }
   }
 }
@@ -803,13 +942,13 @@ export function buildAlfaCsvPreview(operations, db) {
   // Восстанавливаем порядок строк исходного файла.
   entries.sort((a, b) => a._order - b._order)
 
-  // Дедуп по externalRef + данные уже сохранённых операций (для дублей).
+  // Дедуп по externalRef + содержимому + данные уже сохранённых операций.
   const existingByRef = loadExistingByRef(db, entries.map(e => e.externalRef))
 
   let alreadyImported = 0
   let unresolvedAccount = 0
   for (const e of entries) {
-    const existingRows = existingByRef.get(e.externalRef)
+    const existingRows = matchExisting(existingRowsFor(existingByRef, e.externalRef), e)
     const dup = !!existingRows
     if (dup) alreadyImported++
     if (e.type === 'transfer') {
@@ -824,8 +963,10 @@ export function buildAlfaCsvPreview(operations, db) {
   }
 
   const result = entries.map(({ _order, ...e }) => e)
+  // Счёт-специфичные правила учитываем ПОСЛЕ резолва счёта (см. mapping.js).
+  // Если правило не сработало, подсказка по категории банка сохраняется.
   return {
-    operations: result,
+    operations: applyRulesToResolvedOperations(result),
     totals: { found: result.length, alreadyImported, unresolvedAccount, transferCount }
   }
 }

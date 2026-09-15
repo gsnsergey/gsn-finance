@@ -17,12 +17,14 @@ function loadAccount(id) {
 // LIST with filters: accountId, categoryId, type, from, to, q
 // q — поиск по комментарию, счёту, категории и сумме (регистронезависимый).
 router.get('/', (req, res) => {
-  const { accountId, categoryId, type, from, to, q, limit = 500 } = req.query
+  const { accountId, categoryId, type, from, to, q, externalRef, limit = 500 } = req.query
   const where = []
   const params = []
   if (accountId) { where.push('accountId = ?'); params.push(accountId) }
   if (categoryId) { where.push('categoryId = ?'); params.push(categoryId) }
   if (type) { where.push('type = ?'); params.push(type) }
+  // Обе ноги перевода делят externalRef — по нему UI находит вторую половину.
+  if (externalRef) { where.push('externalRef = ?'); params.push(externalRef) }
   if (from) { where.push('date >= ?'); params.push(from) }
   if (to) { where.push('date <= ?'); params.push(to) }
   if (q) {
@@ -71,6 +73,11 @@ router.post('/', (req, res) => {
   if (!['expense', 'income', 'transfer'].includes(body.type)) {
     return res.status(400).json({ error: 'invalid_enum', field: 'type', allowed: ['expense', 'income', 'transfer'] })
   }
+  // Направление — только у transfer; для остальных типов допустим null.
+  const direction = body.transferDirection === undefined ? null : body.transferDirection
+  if (direction !== null && direction !== 'in' && direction !== 'out') {
+    return res.status(400).json({ error: 'invalid_enum', field: 'transferDirection', allowed: ['in', 'out', null] })
+  }
   const amount = Number(body.amount)
   if (!Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: 'invalid_amount' })
@@ -103,15 +110,16 @@ router.post('/', (req, res) => {
 
   const id = body.id || uuid()
   const now = new Date().toISOString()
-  const delta = signedDelta(body.type, amount)
+  // transfer: знак задаёт transferDirection (источник –, получатель +).
+  const delta = signedDelta(body.type, amount, direction)
   // У счёта с фиксацией balance не трогаем: он — снимок на дату balanceAsOf,
   // реальный остаток считается как balance + движения строго после фиксации.
   const adjust = !isFixed(account) && delta !== 0
 
   const tx = db.transaction(() => {
     db.prepare(`INSERT INTO transactions
-      (id, accountId, type, amount, currency, categoryId, date, comment, source, externalRef, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      (id, accountId, type, amount, currency, categoryId, date, comment, source, externalRef, transferDirection, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run(
         id,
         body.accountId,
@@ -123,6 +131,7 @@ router.post('/', (req, res) => {
         body.comment || null,
         body.source || 'agent',
         body.externalRef || null,
+        direction,
         body.createdAt || now,
         now
       )
@@ -151,6 +160,10 @@ router.patch('/:id', (req, res) => {
     if (!Number.isFinite(a) || a <= 0) return res.status(400).json({ error: 'invalid_amount' })
     body.amount = a
   }
+  if (body.transferDirection !== undefined && body.transferDirection !== null
+      && body.transferDirection !== 'in' && body.transferDirection !== 'out') {
+    return res.status(400).json({ error: 'invalid_enum', field: 'transferDirection', allowed: ['in', 'out', null] })
+  }
 
   // Та же нормализация даты, что и в POST — но только если date реально передан:
   // правка комментария без date проходит как раньше.
@@ -163,7 +176,7 @@ router.patch('/:id', (req, res) => {
   }
 
   const patch = { updatedAt: new Date().toISOString() }
-  const allowed = ['accountId', 'type', 'amount', 'currency', 'categoryId', 'date', 'comment', 'source', 'externalRef']
+  const allowed = ['accountId', 'type', 'amount', 'currency', 'categoryId', 'date', 'comment', 'source', 'externalRef', 'transferDirection']
   for (const f of allowed) if (body[f] !== undefined) patch[f] = body[f]
 
   const effective = { ...existing, ...patch }
@@ -188,7 +201,7 @@ router.patch('/:id', (req, res) => {
 
   const tx = db.transaction(() => {
     // откатываем старое влияние на баланс — только у счёта без фиксации
-    const oldDelta = signedDelta(existing.type, existing.amount)
+    const oldDelta = signedDelta(existing.type, existing.amount, existing.transferDirection)
     if (oldDelta !== 0 && oldAccount && !isFixed(oldAccount)) {
       adjustAccountBalance(existing.accountId, -oldDelta)
     }
@@ -200,7 +213,7 @@ router.patch('/:id', (req, res) => {
     db.prepare(`UPDATE transactions SET ${setClause} WHERE id = ?`).run(...values)
 
     // применяем новое — тоже только если целевой счёт без фиксации
-    const newDelta = signedDelta(effective.type, effective.amount)
+    const newDelta = signedDelta(effective.type, effective.amount, effective.transferDirection)
     if (newDelta !== 0 && !isFixed(newAccount)) {
       adjustAccountBalance(effective.accountId, newDelta)
     }
@@ -223,7 +236,7 @@ router.delete('/:id', (req, res) => {
   const account = loadAccount(existing.accountId)
 
   const tx = db.transaction(() => {
-    const delta = signedDelta(existing.type, existing.amount)
+    const delta = signedDelta(existing.type, existing.amount, existing.transferDirection)
     if (delta !== 0 && account && !isFixed(account)) {
       adjustAccountBalance(existing.accountId, -delta)
     }

@@ -122,7 +122,9 @@ router.post('/tochka/preview',
 // ImportItem:
 //   { externalRef?, accountId, transferAccountId? (transfer only),
 //     type: 'income'|'expense'|'transfer', amount, currency?, categoryId?,
-//     date, mcc?, merchantName?, bankSource?: 'alfa'|'tochka' }
+//     date, mcc?, merchantName?, bankSource?: 'alfa'|'tochka',
+//     userComment?: string,   // примечание пользователя из превью — идёт в comment
+//     rawSource?: string }    // оригинальная строка выписки — сохраняется в transactions.rawSource
 // =====================================================================
 router.post('/', (req, res) => {
   const body = req.body || {}

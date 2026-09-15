@@ -1,6 +1,7 @@
 import { api, rub, toast, todayIso, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { categoryIconHTML } from '../data/categoryIcons.js'
+import { transactionTypeKey, transactionTypeLabel, transactionSignedAmount } from '../data/transactionTypes.js'
 
 export async function render(root) {
   const [accounts, categories] = await Promise.all([
@@ -99,11 +100,11 @@ export async function render(root) {
           <tbody>
             ${tx.map(t => `
               <tr data-id="${t.id}">
-                <td>${t.date}</td>
+                <td class="date-cell">${t.date}</td>
                 <td>${accountName(t.accountId)}</td>
                 <td>${categoryName(t.categoryId)}</td>
-                <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-                <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
+                <td><span class="badge badge-${transactionTypeKey(t)}">${transactionTypeLabel(t)}</span></td>
+                <td class="num num-${transactionTypeKey(t)}">${transactionSignedAmount(t) > 0 ? '+' : ''}${rub(transactionSignedAmount(t))}</td>
                 <td class="comment-cell"
                     data-id="${t.id}"
                     data-comment="${escapeHtml(t.comment || '')}"
@@ -126,12 +127,43 @@ export async function render(root) {
     tableSection.querySelectorAll('[data-action="edit"]').forEach(btn => {
       btn.addEventListener('click', () => {
         const txItem = tx.find(t => t.id === btn.dataset.id)
-        if (txItem) openTransactionForm(root, accounts, categories, txItem)
+        if (txItem) openTransactionForm(root, accounts, categories, txItem, tx).catch(e => toast(e.message, 'error'))
       })
     })
 
     tableSection.querySelectorAll('[data-action="delete"]').forEach(btn => {
       btn.addEventListener('click', async () => {
+        const txItem = tx.find(t => t.id === btn.dataset.id)
+        if (!txItem) return
+
+        // Перевод — две ноги: удалять половину нельзя. Пару ищем не только в
+        // загруженном списке (он может быть отфильтрован по счёту/типу/поиску,
+        // и второй ноги в нём нет), но и догрузкой по externalRef.
+        if (txItem.type === 'transfer') {
+          const { outLeg, inLeg, failed } = await resolveTransferPair(txItem, tx)
+          if (failed || !outLeg || !inLeg) {
+            toast('Не удалось найти вторую половину перевода — обновите список', 'error')
+            return
+          }
+          if (!confirm('Удалить перевод (обе половины)?')) return
+          // Удаляем парную ногу первой: если вторая не удалится, восстановим
+          // парную — «полу-перевод» не оставляем.
+          const other = txItem.id === outLeg.id ? inLeg : outLeg
+          try {
+            await api.del(`/api/transactions/${other.id}`)
+            try {
+              await api.del(`/api/transactions/${txItem.id}`)
+            } catch (e) {
+              try { await api.post('/api/transactions', pairCreateBody(other)) }
+              catch (compErr) { console.error('transfer delete compensation failed:', compErr) }
+              throw e
+            }
+            toast('Удалено', 'success')
+            loadAndRenderTable()
+          } catch (e) { toast(e.message, 'error') }
+          return
+        }
+
         if (!confirm('Удалить операцию?')) return
         try {
           await api.del(`/api/transactions/${btn.dataset.id}`)
@@ -240,7 +272,9 @@ export async function render(root) {
       </div>
     </div>
   `
-  document.getElementById('add-tx').addEventListener('click', () => openTransactionForm(root, accounts, categories, null))
+  document.getElementById('add-tx').addEventListener('click', () => {
+    openTransactionForm(root, accounts, categories, null).catch(e => toast(e.message, 'error'))
+  })
 
   // Навешиваем обработчики на фильтры
   const debouncedQ = debounce(() => loadAndRenderTable(), 300)
@@ -279,7 +313,113 @@ function debounce(fn, ms) {
   }
 }
 
-export function openTransactionForm(root, accounts, categories, tx) {
+// --- Перевод: поиск пары и вспомогательные тела запросов ---
+
+// Ищет обе половины перевода: сначала в уже загруженном списке, затем — если
+// externalRef есть, а второй ноги в списке нет (список отфильтрован по счёту/
+// типу/поиску) — догружает по externalRef. `failed` означает, что догрузка
+// упала: в этом случае нельзя менять одну ногу вслепую.
+async function resolveTransferPair(txItem, allTx) {
+  const result = { outLeg: null, inLeg: null, rows: [], failed: false }
+  if (!txItem || txItem.type !== 'transfer') return result
+  const ref = txItem.externalRef
+  const source = Array.isArray(allTx) ? allTx : []
+  let rows = source.filter(r => r.type === 'transfer' && ((ref && r.externalRef === ref) || r.id === txItem.id))
+  if (ref && rows.length < 2) {
+    try {
+      const fetched = await api.get('/api/transactions?externalRef=' + encodeURIComponent(ref) + '&limit=10')
+      const byId = new Map(rows.map(r => [r.id, r]))
+      for (const r of fetched) if (r && r.type === 'transfer') byId.set(r.id, r)
+      rows = [...byId.values()]
+    } catch (e) {
+      result.failed = true
+    }
+  }
+  result.rows = rows
+  Object.assign(result, assignTransferLegs(rows, txItem))
+  return result
+}
+
+// Раскладывает строки по слотам out/in. Строка, из которой открыли форму, обязана
+// попасть в слот; строки без transferDirection (легаси) занимают свободный слот —
+// так мы правим их, а не создаём дубль рядом.
+function assignTransferLegs(rows, txItem) {
+  let outLeg = rows.find(r => r.transferDirection === 'out') || null
+  let inLeg = rows.find(r => r.transferDirection === 'in') || null
+  const assigned = new Set([outLeg?.id, inLeg?.id].filter(Boolean))
+  if (!assigned.has(txItem.id)) {
+    if (!outLeg) { outLeg = txItem; assigned.add(txItem.id) }
+    else if (!inLeg) { inLeg = txItem; assigned.add(txItem.id) }
+  }
+  for (const r of rows) {
+    if (assigned.has(r.id)) continue
+    if (!outLeg) { outLeg = r; assigned.add(r.id) }
+    else if (!inLeg) { inLeg = r; assigned.add(r.id) }
+  }
+  return { outLeg, inLeg }
+}
+
+// Тело PATCH, возвращающее ногу к исходному состоянию (best-effort компенсация
+// при сбое второго шага парной мутации).
+function restoreBody(t) {
+  return {
+    accountId: t.accountId,
+    type: t.type,
+    amount: t.amount,
+    date: t.date,
+    comment: t.comment || '',
+    categoryId: t.categoryId ?? null,
+    source: t.source,
+    externalRef: t.externalRef ?? null,
+    transferDirection: t.transferDirection ?? null
+  }
+}
+
+// Тело POST, восстанавливающее удалённую ногу с тем же id.
+function pairCreateBody(t) {
+  return {
+    id: t.id,
+    accountId: t.accountId,
+    type: t.type,
+    transferDirection: t.transferDirection ?? null,
+    amount: t.amount,
+    currency: t.currency || 'RUB',
+    categoryId: t.categoryId ?? null,
+    date: t.date,
+    comment: t.comment || '',
+    source: t.source || 'manual',
+    externalRef: t.externalRef ?? null
+  }
+}
+
+// Опции <select> счёта: если текущий счёт (value) не попал в activeOptions —
+// например, он архивный или удалён — добавляем его из полного `accounts`.
+// Иначе <select> молча выбрал бы первый активный счёт и сохранил ногу на чужой.
+function accountSelectOptions(baseOptions, accounts, value, needsPlaceholder) {
+  let options = baseOptions
+  if (value) {
+    const has = baseOptions.some(o => String(o.value) === String(value))
+    if (!has) {
+      const acc = (accounts || []).find(a => String(a.id) === String(value))
+      if (acc) {
+        const suffix = acc.archived ? ' (архив)' : ''
+        options = [{
+          value: acc.id,
+          label: `${acc.name}${suffix} — ${rub(acc.currentBalance ?? acc.balance, { html: false })}`
+        }, ...baseOptions]
+      }
+    }
+  }
+  // Placeholder: нет значения вовсе (правка перевода без пары) или значение
+  // валидно, но счёт не найден — вместо чужого первого счёта показываем «выберите».
+  const resolved = value && options.some(o => String(o.value) === String(value))
+  if (!resolved && (needsPlaceholder || value)) {
+    return [{ value: '', label: '— выберите счёт —' }, ...options]
+  }
+  return options
+}
+
+export async function openTransactionForm(root, accounts, categories, tx, allTx) {
   if (!accounts || accounts.length === 0) {
     toast('Сначала создайте счёт', 'error')
     return
@@ -290,6 +430,30 @@ export function openTransactionForm(root, accounts, categories, tx) {
   // (включая <span class="amt-neg">) отображалась бы как сырой код. Передаём
   // { html: false } чтобы rub() отдал чистый текст.
   const accountOptions = activeAccounts.map(a => ({ value: a.id, label: `${a.name} — ${rub(a.currentBalance ?? a.balance, { html: false })}` }))
+
+  // Перевод — две строки type='transfer' с общим externalRef: нога 'out' (источник)
+  // и 'in' (получатель). У отдельной строки нет своего targetAccountId, поэтому
+  // без поиска пары форма показывала первый счёт («чужой»). resolveTransferPair
+  // ищет обе ноги и сам догружает их по externalRef, когда список отфильтрован.
+  const isTransferEdit = isEdit && tx.type === 'transfer'
+  let outLeg = null
+  let inLeg = null
+  let pairRows = []
+  let pairFetchFailed = false
+  if (isTransferEdit) {
+    const resolved = await resolveTransferPair(tx, allTx)
+    outLeg = resolved.outLeg
+    inLeg = resolved.inLeg
+    pairRows = resolved.rows
+    pairFetchFailed = resolved.failed
+  }
+
+  const sourceValue = isTransferEdit ? (outLeg?.accountId || '') : tx?.accountId
+  const targetValue = isTransferEdit ? (inLeg?.accountId || '') : tx?.targetAccountId
+  // Текущий счёт обязан быть в <option>, даже если он архивный: иначе <select>
+  // молча выберет первый активный и при сохранении нога уедет на чужой счёт.
+  const sourceAccountOptions = accountSelectOptions(accountOptions, accounts, sourceValue, isTransferEdit)
+  const targetAccountOptions = accountSelectOptions(accountOptions, accounts, targetValue, isTransferEdit)
 
   // Поля формы: type (toggle), amount, accountId, targetAccountId (только для transfer),
   // categoryId (только для expense/income), date, comment.
@@ -308,15 +472,15 @@ export function openTransactionForm(root, accounts, categories, tx) {
       value: tx ? tx.amount / 100 : undefined },
     {
       name: 'accountId', label: 'Со счёта', type: 'select', required: true,
-      value: tx?.accountId,
-      options: accountOptions,
+      value: sourceValue,
+      options: sourceAccountOptions,
       visibleIf: v => v.type !== 'transfer' ? true : true // всегда виден
     },
     {
       // Целевой счёт — только для перемещения. Метка динамическая: «На счёт».
       name: 'targetAccountId', label: 'На счёт', type: 'select', required: true,
-      value: tx?.targetAccountId,
-      options: accountOptions,
+      value: targetValue,
+      options: targetAccountOptions,
       visibleIf: v => v.type === 'transfer'
     },
     {
@@ -341,6 +505,28 @@ export function openTransactionForm(root, accounts, categories, tx) {
     submitLabel: isEdit ? 'Сохранить' : 'Создать',
     fields,
     onMount: (dialog) => {
+      // Исходная строка выписки — только у импортированных операций (rawSource
+      // есть лишь после импорта; у ручных его нет). Показываем сворачиваемым
+      // блоком read-only, чтобы можно было сверить разбор после записи.
+      // Вставляем сами через onMount (createElement + textContent) — modal.js
+      // не трогаем и новых типов полей не добавляем; текст — textContent, а не
+      // innerHTML, чтобы исключить XSS из банковской строки.
+      if (tx && tx.rawSource) {
+        const form = dialog.querySelector('.modal-form')
+        const actions = form && form.querySelector('.modal-actions')
+        if (form && actions) {
+          const details = document.createElement('details')
+          details.className = 'raw-source-block'
+          const summary = document.createElement('summary')
+          summary.textContent = 'Исходные данные из выписки'
+          const pre = document.createElement('pre')
+          pre.className = 'raw-source-text'
+          pre.textContent = tx.rawSource
+          details.appendChild(summary)
+          details.appendChild(pre)
+          form.insertBefore(details, actions)
+        }
+      }
       // Динамическое скрытие/показ полей в зависимости от текущего значения type.
       // Навешиваем обработчик на change для [name="type"] (radio сегментов).
       const applyVisibility = () => {
@@ -373,36 +559,131 @@ export function openTransactionForm(root, accounts, categories, tx) {
     onSubmit: async (data) => {
       const body = { ...data, source: tx?.source || 'manual' }
       if (body.type === 'transfer') {
-        // Перемещение: создаём пару — расход с исходного и приход на целевой.
-        // Связываем через transferGroup, чтобы потом можно было удалить/править парой.
+        // Перемещение: две ноги type='transfer' с направлением (out — источник,
+        // in — получатель). Так балансы счетов двигаются, как у импортных
+        // переводов, а фильтр «Перемещение» и дашборд «Доход/Расход» не путают
+        // перевод с доходом/расходом. Категория у перевода не задаётся.
         if (!body.targetAccountId) throw new Error('Укажите счёт назначения')
         if (body.targetAccountId === body.accountId) throw new Error('Счета должны различаться')
-        delete body.targetAccountId // поле не идёт в API как есть, обработаем ниже
-        body.source = 'manual'
-        const transferGroup = `tg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-        const base = {
-          amount: body.amount,
+        if (body.amount === null || body.amount <= 0) throw new Error('Сумма должна быть больше нуля')
+        const amount = Math.round(Number(body.amount) * 100)
+        const common = {
+          amount,
           date: body.date,
           comment: body.comment || '',
-          source: 'transfer',
-          transferGroup
+          source: body.source || 'manual',
+          categoryId: null
         }
-        const expense = { ...base, type: 'expense', accountId: body.accountId, categoryId: null }
-        const income = { ...base, type: 'income', accountId: body.targetAccountId, categoryId: null }
-        try {
-          await api.post('/api/transactions', expense)
-          await api.post('/api/transactions', income)
+        const outBody = { ...common, type: 'transfer', transferDirection: 'out', accountId: body.accountId }
+        const inBody = { ...common, type: 'transfer', transferDirection: 'in', accountId: body.targetAccountId }
+
+        // --- Создание ручного перевода ---
+        if (!isEdit) {
+          // Пара ручного перевода получает общий externalRef, иначе при
+          // последующей правке ноги невозможно связать и форма покажет чужой счёт.
+          const externalRef = `tg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+          const createdOut = await api.post('/api/transactions', { ...outBody, externalRef })
+          try {
+            await api.post('/api/transactions', { ...inBody, externalRef })
+          } catch (e) {
+            // Компенсация: не оставляем созданную половину пары висеть.
+            try { await api.del(`/api/transactions/${createdOut.id}`) }
+            catch (compErr) { console.error('transfer create compensation failed:', compErr) }
+            throw e
+          }
           toast('Перемещение создано', 'success')
-        } catch (e) { throw e }
+          render(root)
+          return
+        }
+
+        // --- Правка существующего перевода: обе ноги, с компенсацией ---
+        if (isTransferEdit) {
+          if (pairFetchFailed) throw new Error('Не удалось загрузить вторую половину перевода — попробуйте ещё раз')
+          const ref = tx.externalRef
+          if (!ref) {
+            throw new Error('Не найдена вторая половина перевода — откройте список с обеими ногами')
+          }
+          // Строки без направления (легаси) правим, а не создаём заново: иначе
+          // рядом с существующей ногой появился бы дубль.
+          const unassigned = pairRows.filter(r => r.id !== outLeg?.id && r.id !== inLeg?.id)
+          const applied = []  // { id, original } — ноги, которые надо вернуть при сбое
+          const created = []  // id созданных ног — их надо удалить при сбое
+          try {
+            for (const [slot, legBody] of [['out', outBody], ['in', inBody]]) {
+              const target = (slot === 'out' ? outLeg : inLeg) || unassigned.shift() || null
+              if (target) {
+                applied.push({ id: target.id, original: restoreBody(target) })
+                await api.patch(`/api/transactions/${target.id}`, legBody)
+              } else {
+                const row = await api.post('/api/transactions', { ...legBody, externalRef: ref })
+                created.push(row.id)
+              }
+            }
+          } catch (e) {
+            // Best-effort компенсация: возвращаем изменённые ноги к исходным
+            // значениям и удаляем созданные, чтобы пара не рассогласовалась.
+            for (const a of applied) {
+              try { await api.patch(`/api/transactions/${a.id}`, a.original) }
+              catch (compErr) { console.error('transfer edit compensation failed:', compErr) }
+            }
+            for (const id of created) {
+              try { await api.del(`/api/transactions/${id}`) }
+              catch (compErr) { console.error('transfer edit compensation failed:', compErr) }
+            }
+            throw e
+          }
+          toast('Перемещение обновлено', 'success')
+          render(root)
+          return
+        }
+
+        // --- Смена типа обычной операции на «Перемещение» ---
+        // Текущая строка становится ногой out (PATCH), для получателя создаётся
+        // нога in с общим externalRef. Текущую строку НЕ дублируем: иначе
+        // получался дубль перевода и та же строка оставалась расходом/доходом.
+        const ref = tx.externalRef || `tg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+        const original = restoreBody(tx)
+        try {
+          await api.patch(`/api/transactions/${tx.id}`, { ...outBody, externalRef: ref })
+          await api.post('/api/transactions', { ...inBody, externalRef: ref })
+        } catch (e) {
+          try { await api.patch(`/api/transactions/${tx.id}`, original) }
+          catch (compErr) { console.error('transfer convert compensation failed:', compErr) }
+          throw e
+        }
+        toast('Перемещение создано', 'success')
         render(root)
         return
+      }
+
+      // --- Расход/доход: создание или правка ---
+      // Если правим перевод и меняем тип на расход/доход — удаляем парную ногу,
+      // иначе останется «полу-перевод» с висящей половиной.
+      let pairLeg = null
+      if (isTransferEdit) {
+        if (pairFetchFailed) throw new Error('Не удалось загрузить вторую половину перевода — попробуйте ещё раз')
+        if (!outLeg || !inLeg) throw new Error('Не найдена вторая половина перевода — обновите список')
+        pairLeg = outLeg.id === tx.id ? inLeg : outLeg
+        // Направление перевода у расхода/дохода не имеет смысла — очищаем.
+        body.transferDirection = null
       }
       if (!body.categoryId) delete body.categoryId
       if (body.amount === null || body.amount <= 0) throw new Error('Сумма должна быть больше нуля')
       body.amount = Math.round(Number(body.amount) * 100)
       try {
         if (isEdit) {
+          const original = restoreBody(tx)
           await api.patch(`/api/transactions/${tx.id}`, body)
+          if (pairLeg) {
+            try {
+              await api.del(`/api/transactions/${pairLeg.id}`)
+            } catch (e) {
+              // DELETE парной упал — возвращаем текущую ногу к исходному виду.
+              try { await api.patch(`/api/transactions/${tx.id}`, original) }
+              catch (compErr) { console.error('transfer→expense compensation failed:', compErr) }
+              throw e
+            }
+          }
           toast('Операция обновлена', 'success')
         } else {
           await api.post('/api/transactions', body)

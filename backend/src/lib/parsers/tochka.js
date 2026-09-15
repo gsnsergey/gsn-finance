@@ -33,8 +33,10 @@
 //   (7) Прочее — expense/income по направлению, минимальный recognitionLevel.
 //
 // Парсер толерантен: если в строке нет ни даты, ни суммы — пропускает.
-// Распознанные блоки: externalRef из «Номер документа» (стабильный у Точки;
-// для пустого — `tchk-{date}-{amount}-{rowIdx}`, чтобы дедуп работал).
+// Распознанные блоки: externalRef из «Номер документа» + свой счёт + дата
+// (`tchk-{account}-{yyyymmdd}-doc-{номер}`): «Номер документа» уникален лишь
+// внутри счёта/периода, поэтому один номер недостаточен для глобального дедупа.
+// Для пустого docNumber — `tchk-row-{rowIdx}-{yyyymmdd}-{amount}`.
 //
 // `recognitionLevel`:
 //   - 'full'    : карточная операция с PAN + merchant + city
@@ -165,14 +167,6 @@ function parseRow(cells, ix, rowIdx, rawLine) {
   const purposeText = get('purpose')
   const docNumber = get('docNumber')
 
-  // externalRef: стабильный идентификатор операции в выписке. У Точки это
-  // «Номер документа» (например «558086») — уникален в пределах выписки.
-  // Для пустого docNumber (бывает редко, для входящих с малым док.номером)
-  // синтезируем из даты+суммы+индекса строки — для дедупа хватит.
-  const externalRef = docNumber
-    ? `tchk-doc-${docNumber}`
-    : `tchk-row-${rowIdx}-${yyyy}${mm}${dd}-${Math.round(amountRub * 100)}`
-
   // Распознаём жанр по «Назначению платежа». Применяем regex'ы в порядке
   // от специфичного к общему.
   let genre = 'other'
@@ -225,6 +219,18 @@ function parseRow(cells, ix, rowIdx, rawLine) {
   // передаём абсолютную величину, бэкенд сам проставит знак по типу.
   // Для transfer — тоже положительная (бэкенд создаст 2 записи ±X).
   const amountKopecks = Math.round(amountRub * 100)
+
+  // externalRef — стабильный ключ операции. «Номер документа» у Точки уникален
+  // только ВНУТРИ счёта/периода выписки: один и тот же номер (напр. «1»)
+  // встречается у разных счетов и после сброса нумерации. Ключ из одного номера
+  // поэтому ложно совпадал с чужой операцией — превью писало «уже в БД» для
+  // новой операции, которой в базе нет. Добавляем свой счёт (payee для
+  // входящей, payer для исходящей/перевода) и дату — ключ становится глобально
+  // уникальным. Для пустого docNumber синтезируем из даты+суммы+индекса строки.
+  const accountKey = (type === 'income' ? get('payeeAccount') : get('payerAccount')) || 'noacct'
+  const externalRef = docNumber
+    ? `tchk-${accountKey}-${yyyy}${mm}${dd}-doc-${docNumber}`
+    : `tchk-row-${rowIdx}-${yyyy}${mm}${dd}-${amountKopecks}`
 
   // Recognition level.
   let recognitionLevel

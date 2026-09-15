@@ -28,6 +28,7 @@ export async function render(root) {
   }
 
   root.innerHTML = `
+    <div class="settings-page">
     <div class="section-title section-title-row">
       <span>Категории <span class="muted-inline">${active.length} активных${archived.length > 0 ? ` · ${archived.length} в архиве` : ''}</span></span>
       <span class="section-title-actions">
@@ -111,6 +112,7 @@ export async function render(root) {
         </tbody>
       </table></div>
     `}
+    </div>
   `
 
   document.getElementById('export-btn').addEventListener('click', () => {

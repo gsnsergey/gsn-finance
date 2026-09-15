@@ -2,6 +2,8 @@
 // Список подобран под типовые категории расходов/доходов.
 // Полный каталог: https://fontawesome.com/v4/icons/
 
+import { escapeHtml } from '../api.js'
+
 // Эмодзи для категорий. В БД хранится как обычная строка (Unicode-символы).
 // Иконка считается "эмодзи", если не матчится под FA-формат ASCII kebab-case
 // (см. iconHTML ниже).
@@ -160,18 +162,20 @@ export const CATEGORY_ICONS = [
   { value: 'circle-o', label: 'Без иконки' }
 ]
 
-// Хелпер для отображения: FA-класс → <i class="fa fa-...">, эмодзи/прочее → как есть
+// Хелпер для отображения: FA-класс → <i class="fa fa-...">, эмодзи/прочее → текст
 // Раньше эта функция безусловно оборачивала имя в <i class="fa fa-...">, и для эмодзи
 // вроде "👕" получался невалидный FA-класс "fa-👕" с пустым глифом — иконка пропадала.
 export function iconHTML(name, extraClass = '') {
   if (!name) return ''
   // FA4 имена: ASCII, kebab-case (например, "shopping-cart", "graduation-cap").
-  // Всё остальное (эмодзи, символы) — рендерим как есть.
+  // Всё остальное (эмодзи, произвольная строка) — fallback. Он НЕдоверенный:
+  // categories.icon нигде не валидируется и попадает в innerHTML, поэтому
+  // экранируем — иначе произвольный текст исполнится как разметка (XSS).
   if (/^[a-z][a-z0-9-]*$/.test(name)) {
     const cls = name.startsWith('fa-') ? name : `fa-${name}`
     return `<i class="fa ${cls} ${extraClass}"></i>`
   }
-  return name
+  return escapeHtml(String(name))
 }
 
 // Алиас для обратной совместимости и явности в местах вызова.

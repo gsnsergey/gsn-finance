@@ -374,9 +374,16 @@ uppercase и letter-spacing, поэтому цвет можно не пригл�
 ```
 
 - `.num` — числовые колонки (`tabular-nums`, правый край).
+- `.date-cell` — колонка даты: `white-space: nowrap`, чтобы ISO-дата не рвалась по дефисам.
 - Базовые ячейки — `padding: 8px 16px`, `vertical-align: middle`, разделитель `--border-color-light`;
   `th` — 11px uppercase, `letter-spacing: 0.3px`, фон `--bg-surface-secondary` (sticky).
 - `.table-import` — компактная для превью импорта (padding 6×8, шрифт 12px).
+- `.row-comment` — инпут примечания к строке в превью импорта: значение
+  выставляется через свойство `input.value` (не в `value="…"`), обработчик — без
+  перерисовки таблицы, чтобы поле не теряло фокус. Открывается иконкой
+  `.comment-toggle` в колонке Merchant, поле — в отдельной строке `.row-comment-form`.
+- `.row-jump` / `.row-more` — кликабельные номера незаполненных строк в подсказке превью импорта
+  и кнопка «… ещё N» / «свернуть»: при длинной выписке перечень сворачивается (первые 12).
 - `.table-compact` — для настроек (padding 5×10).
 - `.table-total-row` — итоговая строка («Итого»): `font-weight: 600`, фон `--hover-soft`.
 - `.row-actions` — кнопки действий в строке (горизонтально справа).
@@ -390,7 +397,7 @@ uppercase и letter-spacing, поэтому цвет можно не пригл�
 
 ### 3.6. Бейджи `.badge`
 
-`.badge-expense` / `.badge-income` / `.badge-info` / `.badge-warn` / `.badge-ok` / `.badge-error`.
+`.badge-expense` / `.badge-income` / `.badge-transfer` / `.badge-info` / `.badge-warn` / `.badge-ok` / `.badge-error`.
 Прямоугольные (radius 4px), 10.5px uppercase, `letter-spacing: 0.3px`, палитра `--*-lt` фон + насыщенный цвет.
 Для типа категории: `.cat-type.cat-type-expense` / `.cat-type.cat-type-income`.
 
@@ -456,6 +463,8 @@ openModal({ title, body, closeLabel, wide, onMount, onClose })
 | `.cards-add-form` | Форма-строка добавления карты (border-top сверху) |
 | `.cards-note` | Пояснение внизу (12px, muted) |
 | `.card-pan` | Маска карты: `var(--font-mono)`, 14px |
+| `.raw-source-block` | Свёрнутый read-only блок «Исходные данные из выписки» в форме операции (`rawSource` из импорта): `textContent` (не innerHTML), monospace, `max-height` + скролл |
+| `.raw-source-text` | Текст внутри `.raw-source-block`: `white-space: pre-wrap`, `max-width: 100%` |
 
 ### 3.8. Фильтры и тулбар
 
@@ -542,6 +551,43 @@ Escape, повторный клик по кнопке, скролл/resize/см�
 | `.acc-color-dot` | Маркер цвета счёта в таблице (10px круг); сам цвет — из данных через `cssColor()` |
 | `.card-manager-row` | Строка карты в модалке «Карты счёта» (`accounts.js`): flex-раскладка + `var(--radius)` |
 | `.card-pan` | Маска карты: `var(--font-mono)`, 14px |
+
+### 3.16. Отчёты и графики (`.report-charts`)
+
+Страница `/reports` (`ui/js/views/reports.js`): 4 карточки-итога в `.cards .cards--4`
+(доходы/расходы/сальдо/операций) и две диаграммы на **чистом inline-SVG** —
+библиотек в проекте нет.
+
+| Класс | Назначение |
+|-------|-----------|
+| `.cards--4` | Модификатор `.cards`: 4 колонки; брейкпоинты как у `.cards` (3 → 2 → 1) |
+| `.report-charts` | Grid 2 колонки для двух диаграмм; на `≤1024px` — 1 |
+| `.chart-block` | Карточка одной диаграммы (как `.card`, своя тень/рамка) |
+| `.chart-head` | Заголовок + `.view-mode-toggle` справа |
+| `.chart-title` | Подпись диаграммы (13px, 600) |
+| `.chart-wrap` | Обёртка SVG с горизонтальным скроллом (много месяцев/категорий) |
+| `.chart-svg` | Сам SVG; подписи/сетка/столбцы — потомковые классы (`fill` через токены) |
+| `.chart-donut-body` | Donut + легенда в строку |
+| `.chart-legend` / `.chart-legend-item` | Легенда: маркер, имя, сумма, доля %; `.chart-legend--inline` — вариант в строку |
+| `.chart-empty` | Пустое состояние диаграммы (пунктирная рамка, без деления на ноль) |
+| `.share-bar` / `.share-bar-track` / `.share-bar-fill` / `.share-bar-pct` | Полоска доли в таблице структуры |
+
+Требования к реализации:
+
+- **Данные** — `GET /api/reports/income-expense` (копейки, integer). Переводы
+  между счетами исключены из отчёта полностью (на бэкенде), фильтра
+  «Перемещение» на странице нет.
+- **Цвет столбцов** — `var(--success)` / `var(--danger)`; **цвет сегмента donut и
+  маркера легенды** — только через `cssColor(category.color, fallback)`, где
+  fallback — палитра токенов (`--blue`, `--green`, …). В `style` уходит либо hex
+  из данных, либо токен.
+- **Donut** — `<circle r="15.915">` (длина окружности ≈ 100): доля в процентах
+  кладётся в `stroke-dasharray`, а `stroke-dashoffset = 25 − накопленная доля`
+  разворачивает начало сегмента на 12 часов.
+- **Столбцы** — `viewBox` равен пиксельным размерам (1:1), поэтому кегли подписей
+  заданы в px. Ось Y — «красивый» максимум (1/2/5×10ⁿ) и 4 линии сетки.
+- `role="img"` + `aria-label` с текстовым описанием данных; `rub()` — для
+  денежных значений в карточках/таблицах/легенде.
 
 ---
 

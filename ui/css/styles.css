@@ -488,6 +488,9 @@ a.btn:hover { text-decoration: none; }
 .table td { color: var(--text); }
 .table tr:hover td { background: var(--bg-surface-secondary); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Дата (ISO YYYY-MM-DD) переносилась по дефисам, когда колонку сжимали соседние.
+   В реестре дата — короткая метка строки, держим её в одну линию. */
+.table .date-cell { white-space: nowrap; }
 
 /* Кнопки действий в строке таблицы (✎ / × / ⊘ и т. п.) — в одну линию,
    прижаты к правому краю ячейки. Раньше лежали в одной <td> напрямую и
@@ -634,6 +637,9 @@ a.btn { text-decoration: none; }
 }
 .badge-expense { background: var(--red-lt); color: var(--danger); }
 .badge-income { background: var(--green-lt); color: var(--success); }
+/* Перемещение — нейтральный бейдж: деньги не заработаны и не потрачены,
+   поэтому зелёный/красный доход-расход здесь вводил бы в заблуждение. */
+.badge-transfer { background: var(--slate-lt); color: var(--text-secondary); }
 .badge-info   { background: var(--blue-lt); color: var(--blue); }
 .badge-warn   { background: var(--yellow-lt); color: #b45309; }
 .badge-ok     { background: var(--green-lt); color: var(--success); }
@@ -797,6 +803,22 @@ a.btn { text-decoration: none; }
 }
 .row-jump:hover { opacity: 0.75; }
 .row-jump:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 1px; }
+/* «… ещё N» / «свернуть» в подсказке о незаполненных строках: при длинной
+   выписке (Точка, 200+ строк) полный перечень номеров не помещается — прячем
+   его за этой кнопкой. Жирнее row-jump, чтобы отличалась от номеров строк. */
+.row-more {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.row-more:hover { opacity: 0.75; }
+.row-more:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 1px; }
 /* Короткая подсветка строки, к которой перешли из подсказки. Фон + рамка:
    одно подсвечивает и валидные, и красные (.row-invalid) строки. */
 .table.table-import tr.row-flash td {
@@ -819,7 +841,29 @@ a.btn { text-decoration: none; }
   flex-direction: column;
   gap: 8px;
 }
-.modal-choice-list .btn { width: 100%; }
+.modal-choice-list .btn {
+  width: 100%;
+  /* Подпись группы может быть длинной (текст операции целиком), поэтому
+     разрешаем перенос и растягиваем кнопку по высоте: у .btn nowrap + height:32,
+     и длинный текст вылезал за пределы кнопки. */
+  height: auto;
+  min-height: 32px;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 2px;
+  padding: 7px 12px;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.3;
+}
+.modal-choice-main { white-space: nowrap; }
+.modal-choice-hint {
+  font-size: 11.5px;
+  font-weight: 400;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
 .save-rule {
   display: block;
   margin-top: 4px;
@@ -901,6 +945,45 @@ a.btn { text-decoration: none; }
   color: var(--text);
   font-family: inherit;
   max-width: 100%;
+}
+/* Инпут примечания к строке превью: та же плотность, что у select. Поле живёт
+   в отдельной строке .row-comment-form, поэтому растягивается на всю ширину. */
+.table.table-import .row-comment {
+  width: 100%;
+  min-width: 130px;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+}
+.table.table-import .row-comment:focus {
+  outline: none;
+  border-color: var(--primary-strong);
+}
+.table.table-import .row-comment:disabled { opacity: 0.85; }
+/* Примечание к строке превью: иконка в колонке Merchant (как .raw-toggle),
+   поле открывается отдельной строкой .row-comment-form под операцией. */
+.table.table-import .comment-toggle {
+  border: 0;
+  background: none;
+  padding: 0 4px 0 0;
+  margin: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: inherit;
+  vertical-align: middle;
+}
+.table.table-import .comment-toggle:hover,
+.table.table-import .comment-toggle.active { color: var(--primary-strong); }
+.table.table-import .comment-toggle.has-comment { color: var(--primary-strong); }
+.table.table-import .comment-toggle:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 1px; }
+/* Строка с полем примечания: во всю ширину таблицы, компактная, как .row-raw. */
+.table.table-import tr.row-comment-form td {
+  background: var(--bg-surface-secondary);
 }
 /* Кнопка inline-выбора в превью импорта (счёт/категория): внешне как select,
    но открывает всплывающий список с поиском (нативный select искать не умеет). */
@@ -1022,6 +1105,42 @@ a.btn { text-decoration: none; }
   color: var(--text);
   max-height: 220px;
   overflow: auto;
+}
+
+/* === Исходные данные выписки в форме операции (.raw-source-block) ===
+   Свёрнутый read-only блок: после импорта исходную строку выписки больше
+   нигде не видно (в превью она была только до записи), а сверить разбор
+   нужно — поэтому храним rawSource и показываем его здесь. Компактно, с
+   ограничением высоты и скроллом, чтобы длинная CSV-строка не растягивала
+   модалку. */
+.raw-source-block {
+  margin: 4px 0 12px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-surface-secondary);
+}
+.raw-source-block > summary {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.raw-source-block > summary:hover { color: var(--text); }
+.raw-source-block[open] > summary { border-bottom: 1px solid var(--border-color-light); }
+.raw-source-text {
+  margin: 0;
+  padding: 8px 10px;
+  max-width: 100%;
+  max-height: 220px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
 }
 
 
@@ -1979,4 +2098,140 @@ a.btn { text-decoration: none; }
   padding: 10px 12px;
   font-size: 13px;
   color: var(--muted);
+}
+
+/* === Настройки: таблицы без фиксированной высоты ===
+   На /settings несколько таблиц подряд (категории, архив, интеграции).
+   На остальных страницах .table-wrap — flex-ребёнок .view с flex:1 1 auto,
+   поэтому он растягивается на остаток высоты и скроллится ВНУТРИ себя.
+   В настройках это не нужно: таблицы должны расти по содержимому, а
+   прокручиваться — страница целиком (.view). Обёртка .settings-page не
+   флекс-контейнер, так что flex у .table-wrap не действует; правила явные,
+   чтобы поведение не сломалось, если обёртку когда-нибудь сделают flex. */
+.settings-page .table-wrap {
+  flex: 0 0 auto;
+  min-height: auto;
+}
+
+/* === Импорт выписки: колонка с номером строки превью ===
+   Номера строк нужны, чтобы соотносить таблицу с подсказкой
+   «Заполните данные: строки N» и модалкой «применить к похожим» — там
+   номера и раньше были (idx + 1), но в самой таблице их не было видно. */
+.table.table-import .row-num {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* === Отчёты и графики (reports.js) ===
+   Страница /reports: 4 карточки-итога, две диаграммы на чистом inline-SVG
+   (группированные столбцы + donut на <circle>) и таблицы структуры.
+   Диаграмм в проекте раньше не было, поэтому классы новые; цвета — только
+   токены, динамические цвета категорий подставляются через cssColor(). */
+
+/* 4 карточки в строке (доходы/расходы/сальдо/операций). В остальном это тот
+   же .card; брейкпоинты повторяют поведение .cards из секции Responsive. */
+.cards--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/* Кнопка «Сбросить» в фильтр-баре скрывается атрибутом hidden, но .btn задаёт
+   свой display, который перебивает UA-правило [hidden] — возвращаем скрытие. */
+.filters-bar .btn[hidden] { display: none; }
+
+/* Контейнер двух диаграмм: 2 колонки, на узких — одна. */
+.report-charts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+.chart-block {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+.chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.chart-title { font-size: 13px; font-weight: 600; color: var(--text); }
+
+/* Горизонтальный скролл: при 12+ месяцах/категориях столбцы не сжимаются
+   до нечитаемых, а прокручиваются внутри блока. */
+.chart-wrap { overflow-x: auto; overflow-y: hidden; }
+.chart-svg { display: block; max-width: none; }
+.chart-svg .chart-axis-label { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart-svg .chart-grid-line { stroke: var(--border-color-light); stroke-width: 1; }
+.chart-svg .chart-bar-income { fill: var(--success); }
+.chart-svg .chart-bar-expense { fill: var(--danger); }
+
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  color: var(--muted);
+  font-size: 13px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+/* Donut: кольцо + легенда рядом. */
+.chart-donut-body { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.chart-svg .chart-donut-track { stroke: var(--bg-surface-secondary); }
+.chart-svg .chart-donut-value { fill: var(--text); font-size: 4.2px; font-weight: 600; }
+.chart-svg .chart-donut-caption { fill: var(--muted); font-size: 2.6px; }
+
+.chart-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 220px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.chart-legend-item { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; }
+.chart-legend-marker { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 2px; align-self: center; }
+.chart-legend-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-legend-value { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chart-legend-share { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 42px; text-align: right; }
+/* Легенда столбчатой диаграммы (2 пункта) — в строку, под графиком. */
+.chart-legend--inline { flex-direction: row; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-2); max-height: none; }
+
+/* Доля категории в таблице структуры: полоска + процент. */
+.share-bar { display: flex; align-items: center; gap: 8px; min-width: 120px; }
+.share-bar-track { flex: 1 1 auto; height: 6px; border-radius: 999px; background: var(--bg-surface-secondary); overflow: hidden; }
+.share-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); }
+.share-bar-pct { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 46px; text-align: right; }
+
+/* У отчёта две таблицы под графиками. .table-wrap по умолчанию — flex-ребёнок
+   .view с flex: 1 1 auto и скроллится внутри себя; здесь нужен обычный поток
+   (скроллится вся страница), иначе обе таблицы делят остаток высоты и
+   схлопываются. Тот же приём, что у .settings-page. */
+.reports-page .table-wrap {
+  flex: 0 0 auto;
+  min-height: auto;
+  margin-bottom: var(--space-5);
+}
+
+@media (max-width: 1280px) {
+  .cards--4 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 1024px) {
+  .report-charts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 768px) {
+  .cards--4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .cards--4 { grid-template-columns: minmax(0, 1fr); }
 }

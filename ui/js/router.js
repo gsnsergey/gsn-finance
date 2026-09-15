@@ -11,7 +11,10 @@ export function register(path, view) {
 
 export function currentPath() {
   const hash = window.location.hash || '#/dashboard'
-  return hash.slice(1) // убираем #
+  // Отбрасываем и '#', и query-строку: маршрут ищется по пути, а параметры
+  // (?from=…&type=…) читает сама вьюха из hash. Без этого deep-link
+  // #/reports?… не находил маршрут и падал на /dashboard.
+  return hash.slice(1).split('?')[0]
 }
 
 export async function navigate(path) {
@@ -38,6 +41,7 @@ async function render() {
   const titleMap = {
     '/dashboard': 'Дашборд',
     '/transactions': 'Операции',
+    '/reports': 'Отчёты',
     '/accounts': 'Счета и карты',
     '/deposits': 'Вклады',
     '/portfolio': 'Портфель',

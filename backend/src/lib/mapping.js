@@ -93,3 +93,41 @@ export function applyRulesToOperations(operations, accountId) {
     }
   })
 }
+
+/**
+ * Применяет правила к операциям, у которых УЖЕ проставлен `resolvedAccountId`.
+ *
+ * Нужно на этапе preview: в одной выписке операции разных счетов, а
+ * `loadRules(accountId)` умеет отдавать и глобальные, и счёт-специфичные
+ * правила. Раньше preview звал `applyRulesToOperations(ops, null)` — и
+ * счёт-специфичные правила (а именно их и создаёт UI по галочке
+ * «Сохранить как правило») вообще не применялись.
+ *
+ * Если правило не сработало, уже существующая подсказка (например, категория
+ * банка из выписки) НЕ затирается.
+ */
+export function applyRulesToResolvedOperations(operations) {
+  const cache = new Map()
+  return operations.map(op => {
+    // У перевода категории нет по смыслу — правила к нему не применяем.
+    if (op.type === 'transfer') return op
+    const accountId = op.resolvedAccountId || null
+    let rules = cache.get(accountId)
+    if (rules === undefined) {
+      rules = loadRules(accountId)
+      cache.set(accountId, rules)
+    }
+    const result = suggestCategory(op, rules)
+    if (!result) return op
+    return {
+      ...op,
+      suggestedCategoryId: result.categoryId,
+      matchedRule: {
+        id: result.rule.id,
+        matchType: result.rule.matchType,
+        matchValue: result.rule.matchValue,
+        priority: result.rule.priority
+      }
+    }
+  })
+}

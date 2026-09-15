@@ -1,4 +1,5 @@
-import { api, rub } from '../api.js'
+import { api, rub, toast } from '../api.js'
+import { transactionTypeKey, transactionTypeLabel, transactionSignedAmount } from '../data/transactionTypes.js'
 // toMonthly — тот же коэффициент приведения периода к месяцу, что даёт итог
 // «В месяц» на вкладке «Обязательства». Импортируем, чтобы цифры совпадали.
 import { toMonthly } from './simple-list.js'
@@ -83,9 +84,9 @@ export async function render(root) {
           <tbody>
             ${tx.map(t => `
               <tr class="tx-row" data-tx-id="${t.id}" tabindex="0" role="button" aria-label="Редактировать операцию">
-                <td>${t.date}</td>
-                <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-                <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
+                <td class="date-cell">${t.date}</td>
+                <td><span class="badge badge-${transactionTypeKey(t)}">${transactionTypeLabel(t)}</span></td>
+                <td class="num num-${transactionTypeKey(t)}">${transactionSignedAmount(t) > 0 ? '+' : ''}${rub(transactionSignedAmount(t))}</td>
                 <td>${t.comment || ''}</td>
               </tr>
             `).join('')}
@@ -102,7 +103,7 @@ export async function render(root) {
     txRows.forEach(row => {
       const open = () => {
         const item = tx.find(t => t.id === row.dataset.txId)
-        if (item) openTransactionForm(root, accounts, catsList, item)
+        if (item) openTransactionForm(root, accounts, catsList, item, tx).catch(e => toast(e.message, 'error'))
       }
       row.addEventListener('click', open)
       row.addEventListener('keydown', (e) => {

@@ -282,3 +282,55 @@ import { FOOS, fooLabel } from '../data/foos.js'
 ## 11. Обновить DESIGN.md и SKILLS.md
 
 После нового компонента: `styles.css` → новый класс с комментарием; `DESIGN.md §3` → запись; `§2` если новый токен; `SKILLS.md` → рецепт (если часто). Подробнее — README-AI.md §3.
+
+---
+
+## 12. Отчёт с диаграммой без библиотек
+
+Полигон — `ui/js/views/reports.js` (страница `/reports`). Бандлера и чарт-библиотек
+нет, поэтому SVG собирается строкой и вставляется через `innerHTML`.
+
+**Столбцы (группированные доход/расход по месяцам).** `viewBox` = пиксельные
+размеры (1:1) — тогда подписи можно задавать в px обычным CSS-классом. Ось Y —
+«красивый» максимум (1/2/5×10ⁿ) и 4 линии сетки:
+
+```js
+function niceMax(v) {
+  const pow = Math.pow(10, Math.floor(Math.log10(v)))
+  const n = v / pow
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * pow
+}
+const yOf = v => padTop + plotH - (v / niceMax(maxVal)) * plotH
+```
+
+SVG: `<svg class="chart-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="…">`,
+внутри `<line class="chart-grid-line">`, `<rect class="chart-bar-income|expense">`
+и `<text class="chart-axis-label">`. Цвета столбцов/сетки — в CSS через токены,
+не атрибутом: `.chart-bar-income { fill: var(--success); }`.
+
+**Donut.** Берём `r ≈ 15.915` — длина окружности ровно 100. Доля в процентах
+идёт в `stroke-dasharray`, а сдвиг разворачивает начало на 12 часов:
+
+```js
+let c = 0
+rows.map(row => {
+  const f = row.amount / total
+  const svg = `<circle cx="21" cy="21" r="15.915" fill="none"
+    style="stroke:${cssColor(row.color, PALETTE[i % PALETTE.length])}"
+    stroke-width="6" stroke-dasharray="${f * 100} ${100 - f * 100}"
+    stroke-dashoffset="${25 - c * 100}"></circle>`
+  c += f
+  return svg
+})
+```
+
+**Правила:**
+
+- Цвет из данных — только `cssColor(value, 'var(--token)')` (в `style="stroke:…"`);
+  статичные цвета — классами с токенами.
+- Все пользовательские подписи (категория/счёт) — через `escapeHtml()`.
+- Пустые данные (сумма = 0) → `<div class="chart-empty">`, без деления на ноль.
+- Суммы для осей/центра — без HTML (`toLocaleString`), в таблицах/легенде — `rub()`.
+- `role="img"` + `aria-label` с описанием («08.2026: доход … ₽, расход … ₽»).
+- Много месяцев/категорий → `.chart-wrap { overflow-x: auto; }` и явная `width`
+  у SVG, а не `width:100%`.

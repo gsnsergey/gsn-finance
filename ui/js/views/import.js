@@ -62,6 +62,12 @@ export async function render(root) {
     imported: false         // успешный импорт уже прошёл — превью больше не сохраняем
   }
 
+  // Сколько номеров строк показывать в подсказке «Заполните данные: …» до
+  // сворачивания. В выписке Точки на 200+ строк полный перечень занимал
+  // пол-экрана и сдвигал таблицу; остальные прячем за «… ещё N».
+  const INVALID_ROWS_MAX = 12
+  let invalidExpanded = false
+
   // Загружаем справочники (для select'ов счёта и категории) заранее.
   try {
     const [accounts, categories] = await Promise.all([
@@ -227,15 +233,26 @@ export async function render(root) {
   // список с поиском по подстроке. Нативный <select> искать не умеет, а списки
   // длинные; у категорий ещё и имена повторяются у расходов/доходов («Прочее»),
   // поэтому выбор всегда идёт по id, а не по тексту.
-  function pickOptions(field) {
+  // Категории фильтруем по типу операции: расходной строке предлагаем только
+  // расходные категории, доходной — только доходные. Иначе в списке соседствуют
+  // оба «Прочее» и легко выбрать категорию не того типа. Если тип неизвестен
+  // (transfer), фильтр не применяется.
+  function categoriesForType(rowType) {
+    if (rowType === 'expense' || rowType === 'income') {
+      return state.categories.filter(c => c.type === rowType)
+    }
+    return state.categories
+  }
+
+  function categoryOption(c) {
+    return { value: c.id, label: c.name, html: `${categoryIconHTML(c.icon)} ${escapeHtml(c.name)}` }
+  }
+
+  function pickOptions(field, rowType) {
     if (field === 'categoryId') {
       return [
         { value: '', label: '— без категории —', html: '— без категории —' },
-        ...state.categories.map(c => ({
-          value: c.id,
-          label: c.name,
-          html: `${categoryIconHTML(c.icon)} ${escapeHtml(c.name)}`
-        }))
+        ...categoriesForType(rowType).map(categoryOption)
       ]
     }
     return [
@@ -244,9 +261,45 @@ export async function render(root) {
     ]
   }
 
+  // Тип операции строки с учётом ручных правок — по нему фильтруются категории.
+  function rowTypeOf(idx) {
+    const op = state.preview?.operations[idx]
+    return op ? getEdited(idx, 'type', baseValue(op, 'type')) : null
+  }
+
+  // Экранирование спецсимволов для descriptionRegex: значение правила — это
+  // регулярное выражение, поэтому текст выписки экранируем и он матчится буквально.
+  function escapeRegex(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+
+  // Чем можно заматчить правило для строки: MCC → merchantName → текст операции.
+  // У СБП/QR/налога/оплаты по счёту у Точки нет ни MCC, ни merchant — только
+  // «Назначение платежа» (description), поэтому для них доступен
+  // matchType=descriptionRegex. Без этого «Сохранить как правило» таким
+  // операциям не предлагалось вообще.
+  function ruleMatchFor(op) {
+    if (op.mcc) return { matchType: 'mcc', matchValue: String(op.mcc).trim(), label: `MCC ${op.mcc}` }
+    const merchant = (op.merchantName || '').trim()
+    if (merchant) return { matchType: 'merchantName', matchValue: merchant, label: `merchant «${merchant}»` }
+    const desc = (op.description || '').trim()
+    if (desc) {
+      return { matchType: 'descriptionRegex', matchValue: escapeRegex(desc), label: `текст «${shortText(desc, 64)}»` }
+    }
+    return null
+  }
+
   function pickButtonHTML(idx, field, value, disabled) {
     const isCategory = field === 'categoryId'
-    const found = pickOptions(field).find(o => String(o.value) === String(value || ''))
+    const opts = pickOptions(field, isCategory ? rowTypeOf(idx) : null)
+    let found = opts.find(o => String(o.value) === String(value || ''))
+    // Значение может не входить в список своего типа (категория из правила,
+    // из БД или после смены вида). Подпись всё равно рисуем — иначе ячейка
+    // выглядела бы пустой; в список для выбора её при этом не добавляем.
+    if (!found && isCategory && value) {
+      const c = state.categories.find(c => c.id === value)
+      if (c) found = categoryOption(c)
+    }
     const emptyText = isCategory ? '— без категории —' : '— выбрать —'
     let title = (found && found.value ? found.label : (isCategory ? 'Категория не выбрана' : 'Счёт не выбран')) +
       ' — нажмите, чтобы выбрать (с поиском)'
@@ -369,6 +422,12 @@ export async function render(root) {
     type: 'Вид'
   }
 
+  // Короткая подпись длинного текста (в подсказках/модалке).
+  function shortText(value, max = 56) {
+    const s = String(value || '').trim()
+    return s.length > max ? s.slice(0, max - 1) + '…' : s
+  }
+
   // Ключ merchant для группировки: регистр, кавычки и хвостовые номера/годы не
   // мешают («Комиссия за Альфа-Смарт 2025» ≈ «Комиссия за Альфа-Смарт (12)»).
   function merchantKey(name) {
@@ -381,9 +440,10 @@ export async function render(root) {
   }
 
   // Признак «однотипности» строк: для счёта важнее карта, затем merchant;
-  // для категории/вида — сначала MCC, затем merchant, в последнюю очередь
-  // категория банка (когда ни MCC, ни merchant нет). Нет признака — нет и
-  // предложения (лучше ничего не менять, чем изменить не то).
+  // для категории/вида — сначала MCC, затем merchant, затем текст операции
+  // (у СБП/QR/налога/оплаты по счёту нет ни MCC, ни merchant), в последнюю
+  // очередь категория банка. Нет признака — нет и предложения (лучше ничего
+  // не менять, чем изменить не то).
   function similarGroup(op, field) {
     const merchant = (op.merchantName || '').trim()
     const mKey = merchantKey(merchant)
@@ -391,8 +451,16 @@ export async function render(root) {
     if (isAccount && op.panMask) return { key: `pan:${op.panMask}`, label: `карта ${op.panMask}` }
     if (!isAccount && op.mcc) return { key: `mcc:${op.mcc}`, label: `MCC ${op.mcc}` }
     if (mKey) return { key: `merchant:${mKey}`, label: `«${merchant}»` }
-    if (!isAccount && op.bankCategory) {
-      return { key: `bankcat:${String(op.bankCategory).toLowerCase()}`, label: `категория банка «${op.bankCategory}»` }
+    if (!isAccount) {
+      // Единственный признак операций без карты (СБП/QR/налог/счёт) — текст
+      // «Назначения платежа». Одинаковый текст = та же операция/получатель,
+      // поэтому такие строки тоже считаем похожими (иначе для них «применить
+      // к похожим» не предлагалось вообще).
+      const dKey = merchantKey(op.description)
+      if (dKey) return { key: `desc:${dKey}`, label: `текст «${shortText(op.description)}»` }
+      if (op.bankCategory) {
+        return { key: `bankcat:${String(op.bankCategory).toLowerCase()}`, label: `категория банка «${op.bankCategory}»` }
+      }
     }
     return null
   }
@@ -413,6 +481,7 @@ export async function render(root) {
     const ops = state.preview?.operations || []
     const src = ops[idx]
     if (!src || !value) return
+    const srcType = getEdited(idx, 'type', baseValue(src, 'type'))
     const group = similarGroup(src, field)
     const idxs = []
     const emptyIdxs = []
@@ -427,7 +496,9 @@ export async function render(root) {
       // перевода. Иначе переводы попадали в «строк без категории» и раздували
       // счётчик (показывало 20 при одной реально пустой строке).
       const rowType = getEdited(i, 'type', baseValue(ops[i], 'type'))
-      if (field === 'categoryId' && rowType === 'transfer') continue
+      // Категория — свойство типа операции: расходную категорию не предлагаем
+      // доходным строкам (и наоборот), переводы исключены автоматически.
+      if (field === 'categoryId' && rowType !== srcType) continue
       if (field === 'transferAccountId' && rowType !== 'transfer') continue
       const cur = String(getEdited(i, field, baseValue(ops[i], field)))
       if (!cur) emptyIdxs.push(i)
@@ -453,13 +524,12 @@ export async function render(root) {
       : null
     const choices = []
     if (b.idxs.length) {
-      choices.push({
-        list: b.idxs,
-        text: `Похожим операциям${b.label ? ` (${b.label})` : ''}`
-      })
+      // Основная строка — короткая и всегда влезает; длинная подпись группы
+      // (текст операции целиком) едет второй строкой с переносом.
+      choices.push({ list: b.idxs, text: 'Похожим операциям', hint: b.label })
     }
     if (emptyLabel && b.emptyIdxs.length) {
-      choices.push({ list: b.emptyIdxs, text: `Всем строкам ${emptyLabel}` })
+      choices.push({ list: b.emptyIdxs, text: `Всем строкам ${emptyLabel}`, hint: null })
     }
 
     openModal({
@@ -477,8 +547,9 @@ export async function render(root) {
           <ul class="modal-choice-list">
             ${choices.map((c, i) => `
               <li>
-                <button type="button" class="btn btn-primary" data-choice="${i}">
-                  ${escapeHtml(c.text)} (${c.list.length})
+                <button type="button" class="btn btn-primary modal-choice" data-choice="${i}">
+                  <span class="modal-choice-main">${escapeHtml(c.text)} (${c.list.length})</span>
+                  ${c.hint ? `<span class="modal-choice-hint" title="${escapeAttr(c.hint)}">${escapeHtml(c.hint)}</span>` : ''}
                 </button>
               </li>
             `).join('')}
@@ -540,11 +611,22 @@ export async function render(root) {
     const summary = document.getElementById('import-actions-summary')
     if (summary) {
       // Номера строк — кнопки: по клику прокручиваем к строке и подсвечиваем
-      // (в длинной выписке иначе приходится искать вручную).
-      summary.innerHTML = invalid.length
-        ? 'Заполните данные: строки ' +
-          invalid.map(r => `<button type="button" class="row-jump" data-idx="${r.idx}">${r.idx + 1}</button>`).join(', ')
-        : ''
+      // (в длинной выписке иначе приходится искать вручную). Если незаполненных
+      // строк много, показываем первые INVALID_ROWS_MAX, остальные — за кнопкой
+      // «… ещё N» (разворачивается по клику, состояние живёт до перерисовки вьюхи).
+      if (invalid.length) {
+        const visible = invalidExpanded ? invalid : invalid.slice(0, INVALID_ROWS_MAX)
+        const hidden = invalid.length - visible.length
+        summary.innerHTML = 'Заполните данные: строки ' +
+          visible.map(r => `<button type="button" class="row-jump" data-idx="${r.idx}">${r.idx + 1}</button>`).join(', ') +
+          (hidden > 0
+            ? ` <button type="button" class="row-more" data-action="invalid-toggle">… ещё ${hidden}</button>`
+            : (invalidExpanded && invalid.length > INVALID_ROWS_MAX
+              ? ' <button type="button" class="row-more" data-action="invalid-toggle">свернуть</button>'
+              : ''))
+      } else {
+        summary.innerHTML = ''
+      }
       summary.classList.toggle('import-actions-error', invalid.length > 0)
     }
     schedulePersist()
@@ -605,6 +687,7 @@ export async function render(root) {
         <table class="table table-import">
           <thead>
             <tr>
+              <th class="num" style="width:44px">№</th>
               <th style="width:36px"></th>
               <th>Дата</th>
               <th style="width:70px">MCC</th>
@@ -623,6 +706,7 @@ export async function render(root) {
               const accountId = getEdited(i, 'accountId', baseValue(op, 'accountId'))
               const transferAccountId = getEdited(i, 'transferAccountId', baseValue(op, 'transferAccountId'))
               const categoryId = getEdited(i, 'categoryId', baseValue(op, 'categoryId'))
+              const userComment = getEdited(i, 'userComment', '')
               const type = getEdited(i, 'type', baseValue(op, 'type'))
               const isTransfer = type === 'transfer'
               // HOLD-операции (неподтверждённые резервы) подсвечиваем жёлтым.
@@ -651,9 +735,6 @@ export async function render(root) {
                 ? '<span class="badge badge-warn" title="Операция уже есть в базе — повторно не импортируется. Счёт и категория показаны из БД.">уже в БД</span>'
                 : holdBadge
               const saveAsRule = getEdited(i, 'saveAsRule', false)
-              // Для «Сохранить как правило»: MCC или merchantName (хотя бы что-то для матча).
-              const saveMcc = op.mcc
-              const saveMerchant = op.merchantName
 
               // Колонка «Счёт»: для transfer — 2 выбора (источник и получатель)
               // ДРУГ НАД ДРУГОМ с подписями; иначе — 1.
@@ -692,13 +773,18 @@ export async function render(root) {
               const categoryCell = isTransfer ? `<span class="hint-muted">—</span>` : `
                 ${pickButtonHTML(i, 'categoryId', categoryId, isDup)}
                 ${(() => {
-                  const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
-                  // Для дублей правило не предлагаем: строка всё равно не импортируется.
-                  const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested && !isDup)
+                  // «Сохранить как правило» предлагаем, когда строку НЕ покрывает
+                  // уже существующее правило (matchedRule) и есть чем матчить
+                  // (MCC / merchant / текст операции). Сравнение с
+                  // suggestedCategoryId для этого не годится: категория может быть
+                  // подставлена по категории банка (тогда matchedRule = null), и
+                  // правила при этом нет.
+                  const match = ruleMatchFor(op)
+                  const showSave = !!(categoryId && match && !op.matchedRule && !isDup)
                   return showSave ? `
                     <label class="hint-warn save-rule">
                       <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
-                      Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
+                      Сохранить как правило: ${escapeHtml(match.label)}
                     </label>
                   ` : ''
                 })()}
@@ -706,6 +792,7 @@ export async function render(root) {
 
               return `
                 <tr class="${rowClass}" data-idx="${i}">
+                  <td class="num row-num">${i + 1}</td>
                   <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : (state.checked.get(i) !== false ? 'checked' : '')} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
                   <td>${escapeHtml(op.date)}${dateBadge ? ' ' + dateBadge : ''}</td>
                   <td><code>${escapeHtml(op.mcc || '—')}</code></td>
@@ -713,12 +800,17 @@ export async function render(root) {
                     <button type="button" class="raw-toggle" data-raw-for="${i}"
                             title="Показать исходные данные строки из файла">
                       <i class="fa fa-file-text-o"></i>
-                    </button>` : ''}</td>
+                    </button>` : ''}${isDup ? '' : `
+                    <button type="button" class="comment-toggle${userComment.trim() ? ' has-comment' : ''}"
+                            data-comment-for="${i}" aria-expanded="false"
+                            title="${userComment.trim() ? `Примечание: ${userComment}` : 'Добавить примечание'}">
+                      <i class="fa fa-comment-o"></i>
+                    </button>`}</td>
                   <td><code>${escapeHtml(op.panMask || '—')}</code></td>
                   <td class="account-cell">${accountCell}</td>
                   <td class="category-cell">${categoryCell}</td>
                   <td class="num num-${type} amount-cell">
-                    <span class="amount-value">${type === 'income' ? '+' : ''}${rub(type === 'expense' ? -op.amount : op.amount)}</span>
+                    <span class="amount-value">${type === 'income' ? '+' : ''}${rub(type === 'expense' ? -Math.abs(op.amount) : Math.abs(op.amount))}</span>
                     <button type="button" class="type-toggle" data-idx="${i}" ${isDup ? 'disabled' : ''}
                             title="${isDup ? 'Операция уже в базе — только просмотр' : `Вид операции: ${TYPE_LABEL[type]}. Нажмите, чтобы изменить`}">
                       <i class="fa ${TYPE_ICON[type]}"></i>
@@ -726,9 +818,14 @@ export async function render(root) {
                     <select class="row-type" data-idx="${i}" hidden ${isDup ? 'disabled' : ''}>${typeOpts(type)}</select>
                   </td>
                 </tr>
+                ${!isDup ? `
+                  <tr class="row-comment-form" data-comment-row="${i}" hidden>
+                    <td colspan="9"><input type="text" class="row-comment" data-idx="${i}" placeholder="Примечание…"
+                           title="Своё примечание — сохранится вместе с авто-комментарием банка"></td>
+                  </tr>` : ''}
                 ${op.rawSource ? `
                   <tr class="row-raw" data-raw-row="${i}" hidden>
-                    <td colspan="8"><pre class="raw-source">${escapeHtml(op.rawSource)}</pre></td>
+                    <td colspan="9"><pre class="raw-source">${escapeHtml(op.rawSource)}</pre></td>
                   </tr>
                 ` : ''}
               `
@@ -771,6 +868,37 @@ export async function render(root) {
         setEdited(Number(e.target.dataset.idx), { saveAsRule: e.target.checked })
       })
     })
+    // Примечание к строке: иконка в колонке Merchant (место не тратим отдельной
+    // колонкой), поле открывается отдельной строкой под операцией. Пользовательский
+    // текст НЕ подставляем в value при сборке innerHTML (правило проекта — value
+    // только через свойство, иначе кавычки в примечании ломали бы разметку).
+    // Обработчик ввода — без renderTable: перерисовка отбирала бы фокус.
+    el.querySelectorAll('.comment-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = el.querySelector(`tr.row-comment-form[data-comment-row="${btn.dataset.commentFor}"]`)
+        if (!row) return
+        row.hidden = !row.hidden
+        btn.classList.toggle('active', !row.hidden)
+        btn.setAttribute('aria-expanded', String(!row.hidden))
+        if (!row.hidden) row.querySelector('.row-comment')?.focus()
+      })
+    })
+    el.querySelectorAll('.row-comment').forEach(inp => {
+      const idx = Number(inp.dataset.idx)
+      inp.value = getEdited(idx, 'userComment', '')
+      inp.addEventListener('input', e => {
+        const val = e.target.value
+        setEdited(Number(e.target.dataset.idx), { userComment: val })
+        schedulePersist()
+        // Иконка подсвечивается, когда примечание непустое; полный текст — в
+        // подсказке. Без перерисовки таблицы, чтобы поле не теряло фокус.
+        const toggle = el.querySelector(`.comment-toggle[data-comment-for="${idx}"]`)
+        if (toggle) {
+          toggle.classList.toggle('has-comment', !!val.trim())
+          toggle.title = val.trim() ? `Примечание: ${val}` : 'Добавить примечание'
+        }
+      })
+    })
     // Кнопка «исходные данные из файла»: раскрывает строку с исходным текстом
     // операции (CSV-строка или блок PDF) — чтобы сверить разбор с выпиской.
     el.querySelectorAll('.raw-toggle').forEach(btn => {
@@ -809,6 +937,12 @@ export async function render(root) {
     const summaryEl = document.getElementById('import-actions-summary')
     if (summaryEl) {
       summaryEl.addEventListener('click', e => {
+        // «… ещё N» / «свернуть» — разворачиваем перечень номеров строк.
+        if (e.target.closest('[data-action="invalid-toggle"]')) {
+          invalidExpanded = !invalidExpanded
+          refreshImportState()
+          return
+        }
         const jump = e.target.closest('.row-jump')
         if (jump) jumpToRow(Number(jump.dataset.idx))
       })
@@ -832,16 +966,16 @@ export async function render(root) {
     const op = state.preview.operations[idx]
     const categoryId = getEdited(idx, 'categoryId', baseValue(op, 'categoryId'))
     const saveAsRule = getEdited(idx, 'saveAsRule', false)
-    const saveMcc = op.mcc
-    const saveMerchant = op.merchantName
-    const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
-    const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested && !op.alreadyImported)
+    // Чекбокс — пока строку не покрывает существующее правило (см. renderTable)
+    // и есть чем матчить (MCC / merchant / текст операции).
+    const match = ruleMatchFor(op)
+    const showSave = !!(categoryId && match && !op.matchedRule && !op.alreadyImported)
     cell.innerHTML = `
       ${pickButtonHTML(idx, 'categoryId', categoryId, op.alreadyImported)}
       ${showSave ? `
         <label class="hint-warn save-rule">
           <input type="checkbox" class="row-save-rule" data-idx="${idx}" ${saveAsRule ? 'checked' : ''}>
-          Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
+          Сохранить как правило: ${escapeHtml(match.label)}
         </label>
       ` : ''}
     `
@@ -892,7 +1026,8 @@ export async function render(root) {
     const op = state.preview?.operations[idx]
     if (!op) return
     const current = String(getEdited(idx, field, baseValue(op, field)) || '')
-    const options = pickOptions(field)
+    // Категории — только своего типа (расходные для расхода, доходные для дохода).
+    const options = pickOptions(field, field === 'categoryId' ? rowTypeOf(idx) : null)
 
     const pop = document.createElement('div')
     // Класс category-select — чтобы поиск получил стиль из ui/modal.js-разметки.
@@ -961,12 +1096,11 @@ export async function render(root) {
     const op = state.preview?.operations[idx]
     if (!op) return
     if (field === 'categoryId') {
-      // Автоматически предлагаем создать правило, если выбранная категория
-      // отличается от предложенной парсером и есть MCC/merchant для матча.
-      // Чекбокс всё ещё можно снять руками (не обязательно).
-      const matchesSuggested = value === (op.suggestedCategoryId || '')
-      const hasMatchKey = !!(op.mcc || op.merchantName)
-      if (value && !matchesSuggested && hasMatchKey) {
+      // Автоматически предлагаем создать правило, если строку не покрывает
+      // существующее правило (matchedRule) и есть чем матчить (MCC / merchant /
+      // текст операции, см. ruleMatchFor). Снять галочку всё равно можно руками.
+      const match = ruleMatchFor(op)
+      if (value && !op.matchedRule && match) {
         setEdited(idx, { categoryId: value, saveAsRule: true })
       } else {
         setEdited(idx, { categoryId: value })
@@ -985,7 +1119,10 @@ export async function render(root) {
     // (Enter, программный клик, гонка после правки).
     const invalid = refreshImportState()
     if (invalid.length) {
-      toast(`Заполните счёт и категорию: строки ${invalid.map(r => r.idx + 1).join(', ')}`, 'error')
+      // В тосте тоже не вываливаем все 200 номеров — первые и «и ещё N».
+      const shown = invalid.slice(0, INVALID_ROWS_MAX).map(r => r.idx + 1)
+      const more = invalid.length > INVALID_ROWS_MAX ? ` и ещё ${invalid.length - INVALID_ROWS_MAX}` : ''
+      toast(`Заполните счёт и категорию: строки ${shown.join(', ')}${more}`, 'error')
       return
     }
     const items = []
@@ -1021,7 +1158,11 @@ export async function render(root) {
         categoryId,
         mcc: op.mcc,
         merchantName: op.merchantName,
-        bankSource: state.bankSource
+        bankSource: state.bankSource,
+        // Примечание пользователя + оригинальная строка выписки: backend
+        // склеит первое с авто-комментарием банка и сохранит второе в rawSource.
+        userComment: getEdited(i, 'userComment', ''),
+        rawSource: op.rawSource || null
       }
       if (isTransfer) item.transferAccountId = transferAccountId
       items.push(item)
@@ -1051,14 +1192,20 @@ export async function render(root) {
       const save = state.edits.get(i)?.saveAsRule
       const categoryId = getEdited(i, 'categoryId', op.suggestedCategoryId || '')
       const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
-      if (!save || !categoryId || !op.mcc) continue
-      const key = ruleKey('mcc', op.mcc, accountId)
+      if (!save || !categoryId) continue
+      // Ключ матча — тот же, что показывала галочка: MCC → merchantName →
+      // descriptionRegex (текст операции). Раньше правило писалось ТОЛЬКО по MCC,
+      // поэтому у операций без MCC (комиссии, СБП, штрафы, переводы от людей)
+      // отмеченная галочка молча ничего не создавала.
+      const match = ruleMatchFor(op)
+      if (!match) continue
+      const key = ruleKey(match.matchType, match.matchValue, accountId)
       if (existingRuleKeys.has(key)) continue // правило уже есть — не дублируем
       try {
         await api.post('/api/import-rules', {
           accountId: accountId || null,
-          matchType: 'mcc',
-          matchValue: op.mcc,
+          matchType: match.matchType,
+          matchValue: match.matchValue,
           categoryId,
           priority: 100
         })
@@ -1066,7 +1213,7 @@ export async function render(root) {
       } catch (e) {
         // Гонка (правило создано параллельно) — не ошибка импорта операций.
         if (!String(e.message).includes('UNIQUE') && !String(e.message).includes('constraint')) {
-          console.warn('не удалось сохранить правило для MCC', op.mcc, e)
+          console.warn('не удалось сохранить правило', match.matchType, match.matchValue, e)
         }
       }
     }

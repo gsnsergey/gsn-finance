@@ -2,6 +2,7 @@ const NAV = [
   { section: 'Главное' },
   { path: '/dashboard', label: 'Дашборд', icon: 'tachometer' },
   { path: '/transactions', label: 'Операции', icon: 'exchange' },
+  { path: '/reports', label: 'Отчёты', icon: 'pie-chart' },
   { section: 'Активы' },
   { path: '/accounts', label: 'Счета и карты', icon: 'credit-card' },
   { path: '/deposits', label: 'Вклады', icon: 'bank' },
@@ -19,7 +20,7 @@ const NAV = [
 
 export function renderSidebar() {
   const el = document.getElementById('sidebar')
-  const path = (window.location.hash || '#/dashboard').slice(1)
+  const path = (window.location.hash || '#/dashboard').slice(1).split('?')[0]
   let html = `<a href="#/dashboard" class="brand"><span class="brand-dot"></span>Finans</a><nav class="nav">`
   for (const item of NAV) {
     if (item.section) {

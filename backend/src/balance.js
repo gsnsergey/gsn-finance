@@ -54,7 +54,14 @@ export function dayBefore(v) {
 
 // --- формула ----------------------------------------------------------------
 
-const SIGNED_SQL = `CASE type WHEN 'expense' THEN -amount WHEN 'income' THEN amount ELSE 0 END`
+// transfer — это две ноги с общим externalRef, amount у обеих положителен,
+// поэтому знак даёт transferDirection: 'out' (источник) → −amount,
+// 'in' (получатель) → +amount. Без направления (старые/битые строки) → 0.
+const SIGNED_SQL = `CASE type
+  WHEN 'expense' THEN -amount
+  WHEN 'income'  THEN amount
+  WHEN 'transfer' THEN CASE transferDirection WHEN 'out' THEN -amount WHEN 'in' THEN amount ELSE 0 END
+  ELSE 0 END`
 
 /**
  * SQL-выражение «реальный баланс счёта» для строки таблицы accounts с алиасом `a`.
@@ -62,16 +69,30 @@ const SIGNED_SQL = `CASE type WHEN 'expense' THEN -amount WHEN 'income' THEN amo
  */
 export const CURRENT_BALANCE_EXPR = `(
   a.balance + CASE WHEN a.balanceAsOf IS NULL THEN 0 ELSE COALESCE((
-    SELECT SUM(CASE t.type WHEN 'expense' THEN -t.amount WHEN 'income' THEN t.amount ELSE 0 END)
+    SELECT SUM(CASE t.type
+                 WHEN 'expense' THEN -t.amount
+                 WHEN 'income'  THEN t.amount
+                 WHEN 'transfer' THEN CASE t.transferDirection
+                                        WHEN 'out' THEN -t.amount
+                                        WHEN 'in'  THEN t.amount
+                                        ELSE 0 END
+                 ELSE 0 END)
       FROM transactions t
      WHERE t.accountId = a.id AND date(t.date) > date(a.balanceAsOf)
   ), 0) END
 )`
 
-/** Знаковое влияние операции на баланс: expense → −amount, income → +amount, transfer → 0. */
-export function signedDelta(type, amount) {
+/**
+ * Знаковое влияние операции на баланс: expense → −amount, income → +amount,
+ * transfer → ±amount по transferDirection ('out' → −, 'in' → +), иначе 0.
+ */
+export function signedDelta(type, amount, direction) {
   if (type === 'expense') return -amount
   if (type === 'income') return amount
+  if (type === 'transfer') {
+    if (direction === 'out') return -amount
+    if (direction === 'in') return amount
+  }
   return 0
 }
 

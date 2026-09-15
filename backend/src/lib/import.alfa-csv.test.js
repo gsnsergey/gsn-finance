@@ -27,7 +27,8 @@ process.env.FINANS_DB = dbPath
 const seed = new Database(dbPath)
 seed.exec(`
   CREATE TABLE accounts (
-    id TEXT PRIMARY KEY, name TEXT, bank TEXT, accountNumber TEXT, archived INTEGER DEFAULT 0
+    id TEXT PRIMARY KEY, name TEXT, bank TEXT, accountNumber TEXT, archived INTEGER DEFAULT 0,
+    balance INTEGER DEFAULT 0, balanceAsOf TEXT, updatedAt TEXT
   );
   CREATE TABLE account_cards (
     id TEXT PRIMARY KEY, accountId TEXT, panMask TEXT, label TEXT
@@ -41,7 +42,10 @@ seed.exec(`
   );
   CREATE TABLE transactions (
     id TEXT PRIMARY KEY, accountId TEXT, externalRef TEXT,
-    categoryId TEXT, type TEXT, amount INTEGER
+    categoryId TEXT, type TEXT, amount INTEGER,
+    currency TEXT, date TEXT, comment TEXT, source TEXT, transferDirection TEXT,
+    rawSource TEXT,
+    createdAt TEXT, updatedAt TEXT
   );
   INSERT INTO categories (id, name, type, archived) VALUES
     ('cat-prod', 'Продукты', 'expense', 0),
@@ -63,7 +67,7 @@ seed.close()
 
 // import.js тянет db.js, который читает FINANS_DB — поэтому динамический импорт
 // после установки env. Рабочая data/finans.db не затрагивается.
-const { buildAlfaCsvPreview } = await import('./import.js')
+const { buildAlfaCsvPreview, applyImport } = await import('./import.js')
 const db = new Database(dbPath)
 
 // --- фикстура ---------------------------------------------------------------
@@ -136,8 +140,10 @@ test('preview: категория банка используется как д�
 test('preview: дедуп по externalRef (повторный импорт)', () => {
   const ops = parseAlfaCsvStatement(csv([CARD]))
   const ref = ops[0].externalRef
-  db.prepare('INSERT INTO transactions (id, accountId, externalRef, categoryId, type, amount) VALUES (?, ?, ?, ?, ?, ?)')
-    .run('tx1', 'acc-alfa1', ref, 'cat-prod', 'expense', -10000)
+  // Дубль подтверждается не только ref, но и датой/суммой/счётом — сеем
+  // реальную строку, как её записал бы applyImport.
+  db.prepare('INSERT INTO transactions (id, accountId, externalRef, categoryId, type, amount, date) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run('tx1', 'acc-alfa1', ref, 'cat-prod', 'expense', 10000, ops[0].date)
   const preview = buildAlfaCsvPreview(ops, db)
   assert.equal(preview.totals.alreadyImported, 1)
   assert.equal(preview.operations[0].alreadyImported, true)
@@ -152,8 +158,8 @@ test('preview: дубль не попадает в счётчик «без сч�
   // Помечаем его уже импортированным — счётчик должен обнулиться.
   const ops = parseAlfaCsvStatement(csv([UNKNOWN]))
   assert.equal(buildAlfaCsvPreview(ops, db).totals.unresolvedAccount, 1)
-  db.prepare('INSERT INTO transactions (id, accountId, externalRef, categoryId, type, amount) VALUES (?, ?, ?, ?, ?, ?)')
-    .run('tx2', 'acc-alfa1', ops[0].externalRef, null, 'expense', -1000)
+  db.prepare('INSERT INTO transactions (id, accountId, externalRef, categoryId, type, amount, date) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run('tx2', 'acc-alfa1', ops[0].externalRef, null, 'expense', 1000, ops[0].date)
   assert.equal(buildAlfaCsvPreview(ops, db).totals.unresolvedAccount, 0)
 })
 
@@ -181,6 +187,152 @@ test('preview: при одинаковом имени категория бер�
   const preview = buildAlfaCsvPreview(parseAlfaCsvStatement(csv([inc, exp])), db)
   assert.equal(preview.operations.find(o => o.date === '2026-09-05').suggestedCategoryId, 'cat-other-i')
   assert.equal(preview.operations.find(o => o.date === '2026-09-06').suggestedCategoryId, 'cat-other-e')
+})
+
+// --- applyImport: инвариант знака amount и зафиксированный остаток -------------
+//
+// applyImport — единый путь записи импорта (Альфа + Точка). Проверяем два
+// инварианта учёта остатков:
+//   1) transactions.amount всегда положителен (>= 0), знак берётся из type;
+//   2) счёт с balanceAsOf (isFixed) не получает инкремент accounts.balance.
+
+function addAccount(id, balance, balanceAsOf) {
+  db.prepare(`INSERT INTO accounts (id, name, bank, accountNumber, archived, balance, balanceAsOf)
+              VALUES (?, ?, 'alfa', NULL, 0, ?, ?)`).run(id, id, balance, balanceAsOf)
+  return id
+}
+
+const balanceOf = id => db.prepare('SELECT balance FROM accounts WHERE id = ?').get(id).balance
+const txByRef = ref => db.prepare('SELECT * FROM transactions WHERE externalRef = ?').get(ref)
+
+test('applyImport: expense на счёт с balanceAsOf не меняет accounts.balance', () => {
+  const accountId = addAccount('acc-fixed-exp', 100000, '2026-09-14')
+  const res = applyImport(
+    [{ externalRef: 'ref-fixed-exp', accountId, type: 'expense', amount: 5000, date: '2026-09-15' }],
+    db
+  )
+  assert.equal(res.created, 1)
+  assert.equal(balanceOf(accountId), 100000)   // снимок на дату фиксации не тронут
+})
+
+test('applyImport: amount в transactions положителен для expense', () => {
+  const accountId = addAccount('acc-pos-exp', 100000, null)
+  applyImport(
+    [{ externalRef: 'ref-pos-exp', accountId, type: 'expense', amount: 5000, date: '2026-09-15' }],
+    db
+  )
+  const tx = txByRef('ref-pos-exp')
+  assert.equal(tx.type, 'expense')
+  assert.equal(tx.amount, 5000)   // инвариант: amount >= 0, знак — из type
+})
+
+test('applyImport: на счёт без фиксации balance меняется на ±abs (expense −, income +)', () => {
+  const accountId = addAccount('acc-free', 100000, null)
+  applyImport([
+    { externalRef: 'ref-free-exp', accountId, type: 'expense', amount: 5000, date: '2026-09-15' },
+    { externalRef: 'ref-free-inc', accountId, type: 'income', amount: 30000, date: '2026-09-16' }
+  ], db)
+  assert.equal(balanceOf(accountId), 125000)   // 100000 − 5000 + 30000
+  assert.equal(txByRef('ref-free-exp').amount, 5000)
+  assert.equal(txByRef('ref-free-inc').amount, 30000)
+})
+
+test('applyImport: transfer двигает balance свободных счетов, фиксированные не трогает', () => {
+  const fixed = addAccount('acc-trf-fixed', 100000, '2026-09-14')
+  const free1 = addAccount('acc-trf-free1', 200000, null)
+  const free2 = addAccount('acc-trf-free2', 300000, null)
+  applyImport([
+    { externalRef: 'ref-trf-1', accountId: fixed, transferAccountId: free1, type: 'transfer', amount: 7000, date: '2026-09-15' },
+    { externalRef: 'ref-trf-2', accountId: free1, transferAccountId: free2, type: 'transfer', amount: 9000, date: '2026-09-16' }
+  ], db)
+
+  // Фиксированный источник: balance — снимок на balanceAsOf, инкремент запрещён.
+  assert.equal(balanceOf(fixed), 100000)
+  // free1: пришло 7000 (получатель ref-trf-1), ушло 9000 (источник ref-trf-2).
+  assert.equal(balanceOf(free1), 198000)
+  // free2: пришло 9000 (получатель ref-trf-2).
+  assert.equal(balanceOf(free2), 309000)
+
+  // Обе ноги положительны (инвариант amount), различаются transferDirection.
+  const legs = db.prepare('SELECT amount, transferDirection FROM transactions WHERE externalRef = ? ORDER BY rowid').all('ref-trf-1')
+  assert.equal(legs.length, 2)
+  assert.deepEqual(legs.map(l => l.amount), [7000, 7000])
+  assert.deepEqual(legs.map(l => l.transferDirection), ['out', 'in'])
+})
+
+test('applyImport: у expense/income transferDirection остаётся NULL', () => {
+  const accountId = addAccount('acc-dir-null', 100000, null)
+  applyImport([
+    { externalRef: 'ref-dir-null-e', accountId, type: 'expense', amount: 1000, date: '2026-09-15' },
+    { externalRef: 'ref-dir-null-i', accountId, type: 'income', amount: 2000, date: '2026-09-15' }
+  ], db)
+  assert.equal(txByRef('ref-dir-null-e').transferDirection, null)
+  assert.equal(txByRef('ref-dir-null-i').transferDirection, null)
+})
+
+test('preview: дубль transfer различает ноги по transferDirection', () => {
+  const ops = parseAlfaCsvStatement(csv([OWN_IN, OWN_OUT]))
+  const transfer = buildAlfaCsvPreview(ops, db).operations.find(o => o.type === 'transfer')
+  applyImport([{
+    externalRef: transfer.externalRef,
+    accountId: transfer.resolvedAccountId,
+    transferAccountId: transfer.transferAccountId,
+    type: 'transfer',
+    amount: transfer.amount,
+    date: transfer.date
+  }], db)
+
+  const dup = buildAlfaCsvPreview(ops, db).operations.find(o => o.type === 'transfer')
+  assert.equal(dup.alreadyImported, true)
+  assert.equal(dup.existingAccountId, 'acc-alfa2')          // out = источник
+  assert.equal(dup.existingTransferAccountId, 'acc-alfa1')  // in = получатель
+})
+
+test('applyImport: сохраняет rawSource и склеивает userComment с банковским комментарием', () => {
+  const accountId = addAccount('acc-raw', 100000, null)
+  const account2 = addAccount('acc-raw2', 100000, null)
+  applyImport([
+    {
+      externalRef: 'ref-raw-exp', accountId, type: 'expense', amount: 12345,
+      date: '2026-09-15', mcc: '5411', merchantName: 'MAGNIT',
+      bankSource: 'alfa', userComment: 'Мой текст', rawSource: 'CSV;ROW;MAGNIT'
+    },
+    {
+      // Пустое (пробельное) примечание не должно давать « · » без левой части.
+      externalRef: 'ref-raw-no-uc', accountId, type: 'expense', amount: 5000,
+      date: '2026-09-15', mcc: '5411', merchantName: 'MAGNIT',
+      bankSource: 'alfa', userComment: '   ', rawSource: 'CSV;ROW;2'
+    },
+    {
+      externalRef: 'ref-raw-trf', accountId, transferAccountId: account2,
+      type: 'transfer', amount: 9000, date: '2026-09-16',
+      bankSource: 'tochka', userComment: 'Перевод себе', rawSource: 'trf-src-1\ntrf-src-2'
+    }
+  ], db)
+
+  const exp = txByRef('ref-raw-exp')
+  assert.equal(exp.rawSource, 'CSV;ROW;MAGNIT')
+  assert.equal(exp.comment, 'Мой текст · [Импорт Альфа] MCC 5411 / MAGNIT')
+
+  const noUc = txByRef('ref-raw-no-uc')
+  assert.equal(noUc.rawSource, 'CSV;ROW;2')
+  assert.equal(noUc.comment, '[Импорт Альфа] MCC 5411 / MAGNIT')
+
+  // Обе ноги перевода получают одинаковый rawSource и комментарий.
+  const legs = db.prepare('SELECT rawSource, comment FROM transactions WHERE externalRef = ? ORDER BY rowid').all('ref-raw-trf')
+  assert.equal(legs.length, 2)
+  assert.deepEqual(legs.map(l => l.rawSource), ['trf-src-1\ntrf-src-2', 'trf-src-1\ntrf-src-2'])
+  assert.equal(legs[0].comment, 'Перевод себе · [Импорт Точка · перевод]')
+})
+
+test('applyImport: без userComment и rawSource колонки остаются NULL/авто', () => {
+  const accountId = addAccount('acc-plain', 100000, null)
+  applyImport([
+    { externalRef: 'ref-plain', accountId, type: 'expense', amount: 100, date: '2026-09-15' }
+  ], db)
+  const tx = txByRef('ref-plain')
+  assert.equal(tx.rawSource, null)
+  assert.equal(tx.comment, 'Импорт Альфа')
 })
 
 test.after(() => {

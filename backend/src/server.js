@@ -28,6 +28,7 @@ app.get('/api', (req, res) => {
       'GET    /api/health',
       'GET    /api/summary/net-worth',
       'GET    /api/summary/today',
+      'GET    /api/reports/income-expense',
       'CRUD   /api/accounts',
       'CRUD   /api/transactions',
       'CRUD   /api/categories',

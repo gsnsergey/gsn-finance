@@ -8,6 +8,7 @@ import tInvestRouter from './tinvest.js'
 import brokerCredentialsRouter from './broker_credentials.js'
 import bcsRouter from './bcs.js'
 import importRouter from './import.js'
+import reportsRouter from './reports.js'
 import { CURRENT_BALANCE_EXPR, todayIso } from '../balance.js'
 
 const router = express.Router()
@@ -15,6 +16,9 @@ const router = express.Router()
 // accounts — свой роутер (фиксация остатка + сверка, generic CRUD внутри),
 // поэтому исключён из generic-цикла: иначе его маршруты перекроются.
 router.use('/accounts', accountsRouter)
+
+// Отчёты: агрегаты доходов/расходов для страницы /reports (фильтры + графики).
+router.use('/reports', reportsRouter)
 
 // Все generic CRUD — один и тот же паттерн
 for (const name of Object.keys(TABLE_CONFIGS)) {
@@ -222,7 +226,9 @@ router.get('/summary/net-worth', (req, res) => {
 
 // Сводка за сегодня: доходы и расходы по локальной дате сервера.
 // Источник для карточек «Доход сегодня» / «Расход сегодня» в дашборде.
-// transfer не учитывается — это движение между своими счетами.
+// Переводы между своими счетами не учитываются: и импорт, и ручное создание
+// пишут их как type='transfer'. Фильтр по source оставлен защитой от
+// легаси-строк, у которых перевод мог лежать парой expense/income.
 router.get('/summary/today', (req, res) => {
   try {
     const date = todayIso()
@@ -230,6 +236,7 @@ router.get('/summary/today', (req, res) => {
       `SELECT type, COALESCE(SUM(amount), 0) AS s
          FROM transactions
         WHERE date = ? AND type IN ('income', 'expense')
+          AND COALESCE(source, '') <> 'transfer'
         GROUP BY type`
     ).all(date)
     let incomeToday = 0
