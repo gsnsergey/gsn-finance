@@ -24,6 +24,10 @@ for (const name of Object.keys(TABLE_CONFIGS)) {
     // чтобы UI мог показать читаемое имя («Копилка Ракета») вместо голого
     // brokerAccountId (для BCS, где /portfolio возвращает только ID).
     router.use('/holdings', createHoldingsRouter())
+  } else if (name === 'import_rules') {
+    // Алиас на URL с дефисом: TABLE_CONFIGS ключ — `import_rules` (snake_case),
+    // а UI/sidebar ожидает kebab-case `/import-rules`.
+    router.use('/import-rules', createCrudRouter(name))
   } else {
     router.use(`/${name}`, createCrudRouter(name))
   }

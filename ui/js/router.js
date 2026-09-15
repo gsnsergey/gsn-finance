@@ -1,5 +1,8 @@
 // Простой hash-роутер: #/dashboard, #/transactions, ...
 
+import { render as renderImport } from './views/import.js'
+import { render as renderImportRules } from './views/import-rules.js'
+
 const routes = new Map()
 
 export function register(path, view) {
@@ -42,6 +45,8 @@ async function render() {
     '/loans': 'Кредиты',
     '/subscriptions': 'Подписки',
     '/obligations': 'Обязательства',
+    '/import': 'Импорт выписки',
+    '/import-rules': 'Правила маппинга',
     '/settings': 'Настройки'
   }
   titleEl.textContent = titleMap[path] || 'Finans'
@@ -54,6 +59,11 @@ async function render() {
 }
 
 export function initRouter() {
+  // Регистрация view-модулей. Делается здесь (а не наверху модуля), чтобы
+  // все зависимости (api.js, ui/modal.js) успели инициализироваться.
+  register('/import', renderImport)
+  register('/import-rules', renderImportRules)
+
   window.addEventListener('hashchange', render)
   if (!window.location.hash) window.location.hash = '#/dashboard'
   render()

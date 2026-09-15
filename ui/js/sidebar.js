@@ -12,6 +12,8 @@ const NAV = [
   { path: '/subscriptions', label: 'Подписки', icon: 'refresh' },
   { path: '/obligations', label: 'Обязательства', icon: 'handshake-o' },
   { section: 'Прочее' },
+  { path: '/import', label: 'Импорт выписки', icon: 'upload' },
+  { path: '/import-rules', label: 'Правила маппинга', icon: 'magic' },
   { path: '/settings', label: 'Настройки', icon: 'cog' }
 ]
 
