@@ -172,6 +172,26 @@ router.patch('/:id', (req, res) => {
     balance = Math.round(v)
   }
 
+  // accountNumber: 20 цифр (российский р/с) или пусто (null/'' = снять номер).
+  // Пустое значение трактуется как NULL — для счетов без чёткого номера
+  // (свойства, кредитные карты без привязки к р/с).
+  if (body.accountNumber !== undefined) {
+    const raw = body.accountNumber
+    if (raw === null || raw === '') {
+      body.accountNumber = null
+    } else {
+      const trimmed = String(raw).replace(/\s+/g, '')
+      if (!/^\d{20}$/.test(trimmed)) {
+        return res.status(400).json({
+          error: 'invalid_account_number',
+          field: 'accountNumber',
+          message: 'Номер счёта должен состоять из 20 цифр (российский формат). Пробелы допускаются и игнорируются.'
+        })
+      }
+      body.accountNumber = trimmed
+    }
+  }
+
   const patch = { balance, balanceAsOf, updatedAt: new Date().toISOString() }
   for (const f of cfg.fields) {
     if (f === 'balance' || f === 'balanceAsOf') continue
@@ -215,6 +235,25 @@ router.post('/', (req, res, next) => {
   if (!isValidDay(day)) return badBalanceAsOf(res, 'Дата фиксации должна быть в формате YYYY-MM-DD.')
   if (isFutureDay(day)) return badBalanceAsOf(res, 'Дата фиксации не может быть в будущем.')
   body.balanceAsOf = day
+
+  // accountNumber: тот же контракт, что в PATCH — 20 цифр или пусто.
+  if (body.accountNumber !== undefined) {
+    const accNum = body.accountNumber
+    if (accNum === null || accNum === '') {
+      body.accountNumber = null
+    } else {
+      const trimmed = String(accNum).replace(/\s+/g, '')
+      if (!/^\d{20}$/.test(trimmed)) {
+        return res.status(400).json({
+          error: 'invalid_account_number',
+          field: 'accountNumber',
+          message: 'Номер счёта должен состоять из 20 цифр (российский формат). Пробелы допускаются и игнорируются.'
+        })
+      }
+      body.accountNumber = trimmed
+    }
+  }
+
   next()
 })
 

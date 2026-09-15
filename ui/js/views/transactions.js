@@ -1,4 +1,4 @@
-import { api, rub, toast, todayIso } from '../api.js'
+import { api, rub, toast, todayIso, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { categoryIconHTML } from '../data/categoryIcons.js'
 
@@ -15,7 +15,7 @@ export async function render(root) {
     root.innerHTML = `<div class="empty">
       <div class="empty-title">Начните со счёта</div>
       Создайте хотя бы один счёт, чтобы добавлять операции.
-      <div style="margin-top:16px"><button class="btn btn-primary" id="add-acc">+ Добавить счёт</button></div>
+      <div class="empty-actions"><button class="btn btn-primary" id="add-acc">+ Добавить счёт</button></div>
     </div>`
     document.getElementById('add-acc').addEventListener('click', () => openAccountForm(root, null))
     return
@@ -74,7 +74,7 @@ export async function render(root) {
       ? `<div class="empty">
           <div class="empty-title">Нет операций по фильтру</div>
           Попробуйте сбросить фильтры или изменить условия.
-          <div style="margin-top:12px"><button class="btn btn-sm" id="empty-reset">Сбросить фильтры</button></div>
+          <div class="empty-actions"><button class="btn btn-sm" id="empty-reset">Сбросить фильтры</button></div>
         </div>`
       : `<div class="empty">
           <div class="empty-title">Операций пока нет</div>
@@ -151,7 +151,7 @@ export async function render(root) {
       const id = cell.dataset.id
       const current = cell.dataset.comment
       if (cell.querySelector('input')) return  // уже редактируется
-      cell.innerHTML = `<input type="text" class="comment-input" value="${escapeHtml(current)}" style="width:100%;padding:2px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px;">`
+      cell.innerHTML = `<input type="text" class="comment-input" value="${escapeHtml(current)}">`
       const input = cell.querySelector('input')
       input.focus()
       input.select()
@@ -443,7 +443,4 @@ function openAccountForm(root, account) {
   })
 }
 
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
 

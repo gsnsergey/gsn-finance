@@ -1,6 +1,6 @@
 // Generic list view для deposits / holdings / loans / subscriptions / obligations.
 
-import { api, rub, toast, todayIso } from '../api.js'
+import { api, rub, toast, todayIso, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { BANKS, bankLabel } from '../data/banks.js'
 import { CURRENCIES } from '../data/currencies.js'
@@ -349,7 +349,7 @@ const CONFIGS = {
       { key: 'period', label: 'Период', render: periodLabel },
       { key: 'categoryId', label: 'Категория', render: (v, r, ctx) => {
           const cat = ctx?.categoriesMap?.get(v)
-          if (!cat) return '<span style="color:var(--muted)">—</span>'
+          if (!cat) return '<span class="muted">—</span>'
           return `${categoryIconHTML(cat.icon)} ${escapeHtml(cat.name)}`
         }
       },
@@ -827,7 +827,7 @@ export function makeListView(endpoint) {
                   </td>
                 </tr>
               `).join('')}
-              ${total !== null ? `<tr style="font-weight:600;background:rgba(0,0,0,0.02)">
+              ${total !== null ? `<tr class="table-total-row">
                 <td colspan="${cfg.columns.length - 1}">Итого</td>
                 <td class="num">${rub(total)}</td>
                 <td></td>
@@ -1201,9 +1201,6 @@ function getCliHint(endpoint) {
   return hints[endpoint] || ''
 }
 
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
 
 // Русская форма слова для числа: plural(1, 'счёт', 'счёта', 'счетов').
 function plural(n, one, few, many) {

@@ -68,6 +68,26 @@ export function toast(msg, kind = '') {
   toast._t = setTimeout(() => { el.className = 'toast' }, 2400)
 }
 
+// Экранирование пользовательских значений для HTML. Каноническая реализация:
+// раньше была скопирована в 7 вьюхах и в modal.js; _template.js прямо
+// предписывает вынести её в api.js при повторе в 3+ вьюхах.
+export function escapeHtml(v) {
+  return String(v ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+
+// Значение для атрибута: тот же алфавит. Отдельное имя — читаемость на месте
+// вызова и единая точка, если правила экранирования когда-нибудь разойдутся.
+export function escapeAttr(v) { return escapeHtml(v) }
+
+// Безопасный CSS-цвет из данных (account.color, category.color). Значение
+// подставляется в атрибут style, поэтому без валидации это вектор инъекции.
+// Пропускаем только hex (#rgb/#rgba/#rrggbb/#rrggbbaa), иначе — fallback.
+export function cssColor(v, fallback = 'var(--muted)') {
+  const s = String(v ?? '')
+  return /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s) ? s : fallback
+}
+
 export function todayIso() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`

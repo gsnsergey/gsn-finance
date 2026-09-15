@@ -1,13 +1,22 @@
 // Бизнес-логика импорта банковских выписок, отделённая от Express-роутера.
 //
-// `routes/import.js` — тонкая обёртка над этими функциями: парсит PDF,
-// достаёт массив операций, дальше вызывает buildAlfaPreview (preview) или
-// applyAlfaImport (запись). Тесты могут вызывать функции напрямую с любой
-// better-sqlite3-БД, что делает их детерминированными.
+// `routes/import.js` — тонкая обёртка над этими функциями: парсит PDF/CSV,
+// достаёт массив операций, дальше вызывает buildAlfaPreview/buildTochkaPreview
+// (preview) или applyImport (запись). Тесты могут вызывать функции напрямую с
+// любой better-sqlite3-БД, что делает их детерминированными.
+//
+// Поддерживаемые банки:
+//   - Альфа-Банк: PDF-выписка → parseAlfaStatement
+//   - Альфа-Банк: CSV-выписка → parseAlfaCsvStatement (счёт по номеру р/с или
+//     маске карты; переводы между своими счетами склеиваются в 'transfer')
+//   - Точка-Банк: CSV-выписка → parseTochkaStatement (с типом 'transfer'
+//     для переводов собственных средств между своими счетами)
 
 import { createHash } from 'node:crypto'
 import { v4 as uuid } from 'uuid'
 import { parseAlfaStatement } from './parsers/alfa.js'
+import { parseAlfaCsvStatement, OWN_TRANSFER_CATEGORY } from './parsers/alfa-csv.js'
+import { parseTochkaStatement } from './parsers/tochka.js'
 import { applyRulesToOperations } from './mapping.js'
 
 /**
@@ -112,13 +121,40 @@ export function buildAlfaPreview(operations, db) {
 
 /**
  * Записывает операции в БД с дедупом по externalRef.
- * @param {Array} items  см. routes/import.js — ImportItem
- * @param {object} db    better-sqlite3 instance (default: основной)
+ *
+ * Поддерживает 3 типа:
+ *   - 'expense'  → amount = -Math.abs(amount), одна запись, баланс ↓
+ *   - 'income'   → amount = +Math.abs(amount), одна запись, баланс ↑
+ *   - 'transfer' → ДВЕ записи с общим externalRef: −X на accountId
+ *                  (источник, баланс ↓), +X на transferAccountId
+ *                  (получатель, баланс ↑). Категория для transfer не
+ *                  задаётся (категории — для income/expense).
+ *
+ * Дедуп: если в БД уже есть ЛЮБАЯ запись с таким externalRef, обе записи
+ * transfer считаются уже импортированными и пропускаются целиком.
+ *
+ * @param {Array<ImportItem>} items  см. routes/import.js
+ * @param {object} db               better-sqlite3 instance
  * @returns {{created: number, skipped: number, errors: object[], createdIds: string[]}}
+ *
+ * ImportItem (Альфа-стиль и Точка):
+ *   {
+ *     externalRef: string,
+ *     accountId: string,
+ *     transferAccountId?: string,   // только для type='transfer'
+ *     type: 'income'|'expense'|'transfer',
+ *     amount: number,                // положительные копейки
+ *     currency?: 'RUB'|'RUR',
+ *     categoryId?: string,
+ *     date: 'YYYY-MM-DD',
+ *     mcc?: string,
+ *     merchantName?: string,
+ *     bankSource?: 'alfa'|'tochka'   // влияет на префикс комментария
+ *   }
  */
-export function applyAlfaImport(items, db) {
+export function applyImport(items, db) {
   const now = new Date().toISOString()
-  const findExisting = db.prepare(`SELECT id, accountId FROM transactions WHERE externalRef = ? LIMIT 1`)
+  const findExisting = db.prepare(`SELECT id FROM transactions WHERE externalRef = ? LIMIT 1`)
   const insert = db.prepare(`
     INSERT INTO transactions
       (id, accountId, type, amount, currency, categoryId, date, comment, source, externalRef, createdAt, updatedAt)
@@ -130,44 +166,112 @@ export function applyAlfaImport(items, db) {
 
   const run = db.transaction(() => {
     const result = { created: 0, skipped: 0, errors: [], createdIds: [] }
+
     for (const it of items) {
-      // Платежи без ID (штрафы ГИБДД / СБП) получают synthetic ключ для дедупа.
       const ref = it.externalRef || makeSyntheticRef(it)
+
+      // Один findExisting достаточно — для transfer обе записи создаются
+      // с одним ref; если хоть одна существует, обе считаются импортированными.
       const existing = findExisting.get(ref)
       if (existing) {
         result.skipped++
         continue
       }
+
+      const isTransfer = it.type === 'transfer'
+
+      // Для transfer нужны 2 счёта: источник (accountId) и получатель
+      // (transferAccountId). Оба должны быть валидными и НЕ равны друг другу
+      // (самоперевод не имеет смысла).
+      if (isTransfer) {
+        if (!it.transferAccountId) {
+          result.errors.push({ externalRef: ref, reason: 'transfer_account_required' })
+          continue
+        }
+        if (it.transferAccountId === it.accountId) {
+          result.errors.push({ externalRef: ref, reason: 'transfer_account_same_as_source' })
+          continue
+        }
+      }
+
       const account = findAccount.get(it.accountId)
       if (!account) {
         result.errors.push({ externalRef: ref, reason: 'account_not_found_or_archived' })
         continue
       }
-      if (it.categoryId) {
+
+      const targetAccount = isTransfer ? findAccount.get(it.transferAccountId) : null
+      if (isTransfer && !targetAccount) {
+        result.errors.push({ externalRef: ref, reason: 'transfer_account_not_found_or_archived' })
+        continue
+      }
+
+      // Категории — только для income/expense. Для transfer категория=null.
+      if (!isTransfer && it.categoryId) {
         const cat = findCategory.get(it.categoryId)
         if (!cat) {
           result.errors.push({ externalRef: ref, reason: 'category_not_found' })
           continue
         }
       }
-      // Нормализуем знак: expense → отрицательные копейки, income → положительные.
-      const amount = it.type === 'expense'
-        ? -Math.abs(Math.round(it.amount))
-        : Math.abs(Math.round(it.amount))
 
-      const commentParts = []
-      if (it.mcc) commentParts.push(`MCC ${it.mcc}`)
-      if (it.merchantName) commentParts.push(it.merchantName)
-      const comment = commentParts.length ? `[Импорт Альфа] ${commentParts.join(' / ')}` : 'Импорт Альфа'
-
-      const id = uuid()
+      const absAmount = Math.abs(Math.round(it.amount))
       const currency = it.currency || 'RUB'
+      const bankPrefix = it.bankSource === 'tochka' ? 'Импорт Точка' : 'Импорт Альфа'
+
+      // Комментарий. transfer — короткий, без категории/MCC (там другая природа).
+      let comment
+      if (isTransfer) {
+        const parts = []
+        if (it.merchantName) parts.push(it.merchantName)
+        comment = parts.length ? `[${bankPrefix} · перевод] ${parts.join(' / ')}` : `[${bankPrefix} · перевод]`
+      } else {
+        const parts = []
+        if (it.mcc) parts.push(`MCC ${it.mcc}`)
+        if (it.merchantName) parts.push(it.merchantName)
+        comment = parts.length ? `[${bankPrefix}] ${parts.join(' / ')}` : bankPrefix
+      }
+
+      // Знаки суммы по типу:
+      //   expense  → −absAmount (списание со счёта, баланс ↓)
+      //   income   → +absAmount (поступление на счёт, баланс ↑)
+      //   transfer → источник: −absAmount (баланс ↓), получатель: +absAmount (баланс ↑)
+      const sign = it.type === 'expense' ? -1 : +1
+      const signedSource = sign * absAmount
+
       try {
-        insert.run(id, it.accountId, it.type, amount, currency, it.categoryId || null, it.date, comment, ref, now, now)
-        // Обновляем баланс: для expense уменьшаем (amount < 0), для income увеличиваем.
-        updateBalance.run(amount, now, it.accountId)
-        result.created++
-        result.createdIds.push(id)
+        if (isTransfer) {
+          // Запись 1: источник (−X). Знак amount отрицательный — для истории и
+          // для будущей формулы CURRENT_BALANCE_EXPR, если её расширят.
+          // Сейчас balance.js:signedDelta возвращает 0 для transfer, и
+          // accounts.balance мы НЕ трогаем (закомно): реальный баланс
+          // считается как balance + Σ(income/expense), transfer — бухгалтерская
+          // проводка «откуда → куда», она не должна задним числом искажать
+          // зафиксированный остаток (balanceAsOf). Если пользователь хочет
+          // отразить перемещение в балансе — он сверет счёт через /reconcile.
+          const idSource = uuid()
+          insert.run(
+            idSource, it.accountId, 'transfer', signedSource, currency, null, it.date, comment,
+            ref, now, now
+          )
+          result.created++
+          result.createdIds.push(idSource)
+
+          // Запись 2: получатель (+X). Те же ограничения: balance не двигаем.
+          const idTarget = uuid()
+          insert.run(
+            idTarget, it.transferAccountId, 'transfer', absAmount, currency, null, it.date, comment,
+            ref, now, now
+          )
+          result.created++
+          result.createdIds.push(idTarget)
+        } else {
+          const id = uuid()
+          insert.run(id, it.accountId, it.type, signedSource, currency, it.categoryId || null, it.date, comment, ref, now, now)
+          updateBalance.run(signedSource, now, it.accountId)
+          result.created++
+          result.createdIds.push(id)
+        }
       } catch (e) {
         result.errors.push({ externalRef: ref, reason: e.message })
       }
@@ -176,6 +280,12 @@ export function applyAlfaImport(items, db) {
   })
   return run()
 }
+
+/**
+ * Backward-compat алиас: раньше называлась applyAlfaImport. Сейчас единая
+ * applyImport для обоих банков (Альфа + Точка).
+ */
+export const applyAlfaImport = applyImport
 
 /**
  * Полный цикл preview для Альфа-выписки: PDF buffer → preview JSON.
@@ -191,4 +301,444 @@ export async function previewAlfaFromPdf(pdfBuffer, db) {
   const result = await parser.getText()
   const ops = parseAlfaStatement(result.text || '')
   return buildAlfaPreview(ops, db)
+}
+
+// =================================================================
+// Точка-Банк (CSV).
+//
+// Автоматический резолв счёта: CSV Точки содержит «Счёт плательщика» и
+// «Счёт получателя» — это номера р/с (20 цифр). Если пользователь
+// заполнил `accounts.accountNumber` для своих счетов Точки — импорт сам
+// сопоставит операцию с accountId. Не нужно выбирать руками.
+//
+// Логика:
+//   income (Входящий)  → resolvedAccountId = счёт получателя (= наш, куда пришли деньги)
+//   expense (Исходящий) → resolvedAccountId = счёт плательщика (= наш, откуда ушли)
+//   transfer (любое направление) →
+//     accountId          = счёт плательщика (тот, с которого ушли деньги)
+//     transferAccountId  = счёт получателя (тот, на который пришли)
+//     Направление в выписке здесь вторично — это перспектива основного
+//     счёта Точки, а не наш признак «откуда/куда».
+//
+// Если accountNumber из выписки не найден в accounts (bank='tochka') —
+// операция остаётся unresolvedAccount и пользователь выбирает счёт в UI.
+// =================================================================
+
+/**
+ * Резолвит карту «номер счёта (20 цифр) → {id, name}» для счетов Точки.
+ * Один запрос на весь импорт — на 212 операций это O(1) БД-вызов.
+ *
+ * @param {string[]} accountNumbers  уникальные номера из выписки
+ * @param {object} db
+ * @returns {Map<string, {id: string, name: string}>}
+ */
+function buildAccountNumberMap(accountNumbers, db) {
+  const map = new Map()
+  const nums = [...new Set(accountNumbers.filter(Boolean))]
+  if (!nums.length) return map
+  const placeholders = nums.map(() => '?').join(',')
+  const rows = db.prepare(
+    `SELECT id, name, accountNumber FROM accounts WHERE bank = ? AND archived = 0 AND accountNumber IN (${placeholders})`
+  ).all('tochka', ...nums)
+  for (const r of rows) map.set(r.accountNumber, { id: r.id, name: r.name })
+  return map
+}
+
+/**
+ * Собирает preview для Точки-выписки (CSV).
+ *
+ * @param {Array} operations  результат parseTochkaStatement
+ * @param {object} db         better-sqlite3 instance
+ * @returns {{operations: object[], totals: {found, alreadyImported, unresolvedAccount, transferCount}}}
+ */
+export function buildTochkaPreview(operations, db) {
+  if (!operations.length) {
+    return { operations: [], totals: { found: 0, alreadyImported: 0, unresolvedAccount: 0, transferCount: 0 } }
+  }
+
+  // Применяем правила маппинга — сработают только descriptionRegex/merchantName,
+  // потому что у Точки нет MCC.
+  const withMapping = applyRulesToOperations(operations, null)
+
+  // Авто-резолв: собираем все уникальные номера счетов из выписки, делаем
+  // один запрос в БД.
+  const accountNumbers = []
+  for (const op of withMapping) {
+    if (op.payerAccount) accountNumbers.push(op.payerAccount)
+    if (op.payeeAccount) accountNumbers.push(op.payeeAccount)
+  }
+  const accountByNumber = buildAccountNumberMap(accountNumbers, db)
+
+  // Дедуп по externalRef: если в БД уже есть запись с таким externalRef,
+  // операция считается уже импортированной (для transfer — обе записи с этим
+  // ref создаются вместе, поэтому «существует» = любая из них).
+  const externalRefs = withMapping.map(o => o.externalRef)
+  const existing = externalRefs.length
+    ? db.prepare(`SELECT DISTINCT externalRef FROM transactions WHERE externalRef IN (${externalRefs.map(() => '?').join(',')})`).all(...externalRefs)
+    : []
+  const existingByRef = new Set(existing.map(r => r.externalRef))
+
+  let alreadyImported = 0
+  let unresolvedAccount = 0
+  let transferCount = 0
+  const result = withMapping.map(op => {
+    const dup = existingByRef.has(op.externalRef)
+    if (dup) alreadyImported++
+
+    // Резолв по номеру счёта из выписки.
+    let resolvedAccountId = null
+    let resolvedAccountName = null
+    let resolvedTransferAccountId = null
+    let resolvedTransferAccountName = null
+
+    const payerMatch = op.payerAccount ? accountByNumber.get(op.payerAccount) : null
+    const payeeMatch = op.payeeAccount ? accountByNumber.get(op.payeeAccount) : null
+
+    if (op.type === 'transfer') {
+      // transfer: деньги ушли с payerAccount (источник, баланс ↓) на
+      // payeeAccount (получатель, баланс ↑). Направление в выписке
+      // вторично.
+      if (payerMatch) {
+        resolvedAccountId = payerMatch.id
+        resolvedAccountName = payerMatch.name
+      }
+      if (payeeMatch) {
+        resolvedTransferAccountId = payeeMatch.id
+        resolvedTransferAccountName = payeeMatch.name
+      }
+    } else if (op.type === 'income') {
+      // входящая: деньги пришли НА наш счёт = payeeAccount
+      if (payeeMatch) {
+        resolvedAccountId = payeeMatch.id
+        resolvedAccountName = payeeMatch.name
+      }
+    } else if (op.type === 'expense') {
+      // исходящая: деньги ушли С нашего счёта = payerAccount
+      if (payerMatch) {
+        resolvedAccountId = payerMatch.id
+        resolvedAccountName = payerMatch.name
+      }
+    }
+
+    // unresolved — это когда ни источник, ни (для transfer) получатель
+    // не зарезолвились. Для transfer оба обязательны; для income/expense — только источник.
+    if (op.type === 'transfer') {
+      if (!resolvedAccountId || !resolvedTransferAccountId) unresolvedAccount++
+    } else {
+      if (!resolvedAccountId) unresolvedAccount++
+    }
+
+    if (op.type === 'transfer') transferCount++
+
+    return {
+      externalRef: op.externalRef,
+      date: op.date,
+      originalDate: op.originalDate,
+      type: op.type,
+      amount: op.amount,                   // для transfer всегда положительный
+      currency: op.currency,
+      panMask: op.panMask,
+      mcc: op.mcc,
+      merchantName: op.merchantName,
+      terminalId: op.terminalId,
+      country: op.country,
+      city: op.city,
+      description: op.description,
+      // Подтверждение из выписки — всегда true (HOLD-режима у Точки нет).
+      confirmed: op.confirmed !== false,
+      recognitionLevel: op.recognitionLevel || 'minimal',
+      // Авто-резолв по номеру счёта. UI может переопределить через select.
+      resolvedAccountId,
+      resolvedAccountName,
+      // Для transfer нужен второй счёт. По умолчанию null — UI предложит выбор.
+      transferAccountId: op.type === 'transfer' ? resolvedTransferAccountId : undefined,
+      transferAccountName: op.type === 'transfer' ? resolvedTransferAccountName : undefined,
+      // Контекст для UI: payerAccount/payeeAccount — пользователь видит откуда/куда.
+      payerName: op.payerName || null,
+      payeeName: op.payeeName || null,
+      payerAccount: op.payerAccount || null,
+      payeeAccount: op.payeeAccount || null,
+      payerInn: op.payerInn || null,
+      payeeInn: op.payeeInn || null,
+      purposeKind: op.purposeKind || null,
+      suggestedCategoryId: op.suggestedCategoryId,
+      matchedRule: op.matchedRule,
+      alreadyImported: dup
+    }
+  })
+
+  return {
+    operations: result,
+    totals: { found: result.length, alreadyImported, unresolvedAccount, transferCount }
+  }
+}
+
+/**
+ * Полный цикл preview для Точки-выписки: CSV text → preview JSON.
+ * @param {string} csvText  UTF-8 текст CSV (с BOM или без)
+ * @param {object} db       better-sqlite3 instance
+ * @returns {{operations, totals}}
+ */
+export function previewTochkaFromCsv(csvText, db) {
+  const ops = parseTochkaStatement(csvText || '')
+  return buildTochkaPreview(ops, db)
+}
+
+// =================================================================
+// Альфа-Банк (CSV-выписка).
+//
+// Формат CSV отличается от PDF: есть готовые колонки accountNumber/cardNumber,
+// поэтому счёт резолвится сразу по двум ключам:
+//   1. accountNumber (20 цифр) → accounts.accountNumber (bank='alfa')
+//   2. cardNumber (маска `220015******4795` → `220015++++++4795`) → account_cards
+//
+// Категории: Alfa отдаёт свою категорию (`bankCategory`). Если правило
+// import_rules (MCC / merchantName / regex) не сработало, но название
+// категории Альфы точно совпадает с категорией в БД — подставляем её.
+// Это не заменяет правила, а даёт полезный дефолт («Продукты» → «Продукты»).
+//
+// Переводы между своими счетами: Альфа пишет две строки с одной датой и
+// суммой — «Списание» на счёте-источнике и «Пополнение» на счёте-получателе
+// (category = «Между своими счетами»). Склеиваем их в одну операцию
+// type='transfer', иначе балансы и дашборд раздуваются на обе стороны.
+// =================================================================
+
+/**
+ * Резолвит счёт по номеру р/с и/или маске карты для счетов Альфы.
+ * @param {Array} operations результат parseAlfaCsvStatement
+ * @param {object} db
+ * @returns {{byNumber: Map, byMask: Map}}
+ */
+function buildAlfaAccountMaps(operations, db) {
+  const byNumber = new Map()
+  const byMask = new Map()
+
+  const numbers = [...new Set(operations.map(o => o.accountNumber).filter(Boolean))]
+  if (numbers.length) {
+    const rows = db.prepare(
+      `SELECT id, name, accountNumber FROM accounts
+        WHERE bank = 'alfa' AND archived = 0 AND accountNumber IN (${numbers.map(() => '?').join(',')})`
+    ).all(...numbers)
+    for (const r of rows) byNumber.set(r.accountNumber, { id: r.id, name: r.name })
+  }
+
+  const masks = [...new Set(operations.map(o => o.panMask).filter(Boolean))]
+  if (masks.length) {
+    const rows = db.prepare(
+      `SELECT ac.panMask, ac.accountId, a.name
+         FROM account_cards ac JOIN accounts a ON a.id = ac.accountId
+        WHERE a.archived = 0 AND ac.panMask IN (${masks.map(() => '?').join(',')})`
+    ).all(...masks)
+    for (const r of rows) byMask.set(r.panMask, { id: r.accountId, name: r.name })
+  }
+
+  return { byNumber, byMask }
+}
+
+function normalizeCategoryName(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/**
+ * Карта «название категории (lowercase) → id» — дефолтная подстановка для
+ * категорий Альфы, когда import_rules не сработали.
+ */
+function loadCategoryNameMap(db) {
+  const rows = db.prepare(`SELECT id, name FROM categories WHERE archived = 0`).all()
+  const map = new Map()
+  for (const r of rows) {
+    const key = normalizeCategoryName(r.name)
+    if (key && !map.has(key)) map.set(key, r.id)
+  }
+  return map
+}
+
+function resolveAlfaAccount(op, maps) {
+  if (op.accountNumber) {
+    const byNumber = maps.byNumber.get(op.accountNumber)
+    if (byNumber) return byNumber
+  }
+  if (op.panMask) {
+    const byMask = maps.byMask.get(op.panMask)
+    if (byMask) return byMask
+  }
+  return null
+}
+
+function alfaSuggestedCategory(op, catByName) {
+  if (op.suggestedCategoryId) return op.suggestedCategoryId
+  if (!op.bankCategory) return null
+  return catByName.get(normalizeCategoryName(op.bankCategory)) || null
+}
+
+function toAlfaPreviewEntry(op, account, catByName, order) {
+  return {
+    externalRef: op.externalRef,
+    date: op.date,
+    originalDate: op.originalDate,
+    type: op.type,
+    amount: op.amount,
+    currency: op.currency,
+    panMask: op.panMask,
+    mcc: op.mcc,
+    merchantName: op.merchantName,
+    terminalId: op.terminalId,
+    country: op.country,
+    city: op.city,
+    description: op.description,
+    confirmed: op.confirmed !== false,
+    recognitionLevel: op.recognitionLevel || 'minimal',
+    resolvedAccountId: account ? account.id : null,
+    resolvedAccountName: account ? account.name : null,
+    bankCategory: op.bankCategory || null,
+    status: op.status || null,
+    suggestedCategoryId: alfaSuggestedCategory(op, catByName),
+    matchedRule: op.matchedRule,
+    _order: order
+  }
+}
+
+function toAlfaTransferEntry(expenseOp, incomeOp, maps, order) {
+  const source = resolveAlfaAccount(expenseOp, maps)
+  const target = resolveAlfaAccount(incomeOp, maps)
+
+  // Тот же счёт с обеих сторон — это не перевод между своими счетами.
+  // Отдаём обе строки как обычные операции, чтобы не порождать
+  // transfer_account_same_as_source при записи.
+  if (source && target && source.id === target.id) return null
+
+  const amount = Math.abs(expenseOp.amount)
+  const hash = createHash('sha1')
+    .update([expenseOp.date, amount, expenseOp.accountNumber || '', incomeOp.accountNumber || ''].join('|'))
+    .digest('hex').slice(0, 16)
+
+  return {
+    externalRef: `alfacsv-transfer-${hash}`,
+    date: expenseOp.date,
+    originalDate: expenseOp.originalDate,
+    type: 'transfer',
+    amount,
+    currency: expenseOp.currency,
+    panMask: null,
+    mcc: null,
+    merchantName: OWN_TRANSFER_CATEGORY,
+    terminalId: null,
+    country: null,
+    city: null,
+    description: `${OWN_TRANSFER_CATEGORY}: ${expenseOp.accountNumber || '?'} → ${incomeOp.accountNumber || '?'}`,
+    confirmed: expenseOp.confirmed !== false && incomeOp.confirmed !== false,
+    recognitionLevel: 'minimal',
+    resolvedAccountId: source ? source.id : null,
+    resolvedAccountName: source ? source.name : null,
+    transferAccountId: target ? target.id : null,
+    transferAccountName: target ? target.name : null,
+    payerAccount: expenseOp.accountNumber || null,
+    payeeAccount: incomeOp.accountNumber || null,
+    bankCategory: OWN_TRANSFER_CATEGORY,
+    status: expenseOp.status || null,
+    suggestedCategoryId: null,
+    matchedRule: null,
+    _order: order
+  }
+}
+
+/**
+ * Собирает preview для CSV-выписки Альфа-Банка.
+ *
+ * @param {Array} operations  результат parseAlfaCsvStatement
+ * @param {object} db         better-sqlite3 instance
+ * @returns {{operations: object[], totals: {found, alreadyImported, unresolvedAccount, transferCount}}}
+ */
+export function buildAlfaCsvPreview(operations, db) {
+  if (!operations.length) {
+    return { operations: [], totals: { found: 0, alreadyImported: 0, unresolvedAccount: 0, transferCount: 0 } }
+  }
+
+  const withMapping = applyRulesToOperations(operations, null)
+  const maps = buildAlfaAccountMaps(withMapping, db)
+  const catByName = loadCategoryNameMap(db)
+
+  // Делим строки на обычные и «свои переводы», группируя переводы по
+  // дате+сумме: внутри группы Списание = источник, Пополнение = получатель.
+  const ownGroups = new Map()
+  const entries = []
+  withMapping.forEach((op, idx) => {
+    if (op.isOwnTransfer && (op.type === 'expense' || op.type === 'income')) {
+      // Ключ — дата + МОДУЛЬ суммы: у Списания сумма отрицательная,
+      // у Пополнения положительная, но это две половины одного перевода.
+      const key = `${op.date}|${Math.abs(op.amount)}`
+      if (!ownGroups.has(key)) ownGroups.set(key, { expenses: [], incomes: [] })
+      ownGroups.get(key)[op.type === 'expense' ? 'expenses' : 'incomes'].push({ op, idx })
+      return
+    }
+    entries.push(toAlfaPreviewEntry(op, resolveAlfaAccount(op, maps), catByName, idx))
+  })
+
+  let transferCount = 0
+  for (const group of ownGroups.values()) {
+    const pairs = Math.min(group.expenses.length, group.incomes.length)
+    for (let i = 0; i < pairs; i++) {
+      const { op: expenseOp, idx } = group.expenses[i]
+      const { op: incomeOp } = group.incomes[i]
+      const entry = toAlfaTransferEntry(expenseOp, incomeOp, maps, idx)
+      if (entry) {
+        entries.push(entry)
+      } else {
+        // Самоперевод — оставляем двумя обычными строками.
+        entries.push(toAlfaPreviewEntry(expenseOp, resolveAlfaAccount(expenseOp, maps), catByName, idx))
+        entries.push(toAlfaPreviewEntry(incomeOp, resolveAlfaAccount(incomeOp, maps), catByName, group.incomes[i].idx))
+      }
+    }
+    // Непарные остатки (например, вторая половина не попала в выписку)
+    // сохраняем как обычные операции — терять данные нельзя.
+    for (let i = pairs; i < group.expenses.length; i++) {
+      const { op, idx } = group.expenses[i]
+      entries.push(toAlfaPreviewEntry(op, resolveAlfaAccount(op, maps), catByName, idx))
+    }
+    for (let i = pairs; i < group.incomes.length; i++) {
+      const { op, idx } = group.incomes[i]
+      entries.push(toAlfaPreviewEntry(op, resolveAlfaAccount(op, maps), catByName, idx))
+    }
+  }
+
+  // Восстанавливаем порядок строк исходного файла.
+  entries.sort((a, b) => a._order - b._order)
+
+  // Дедуп по externalRef.
+  const externalRefs = entries.map(e => e.externalRef)
+  const existing = externalRefs.length
+    ? db.prepare(`SELECT DISTINCT externalRef, accountId FROM transactions WHERE externalRef IN (${externalRefs.map(() => '?').join(',')})`).all(...externalRefs)
+    : []
+  const existingByRef = new Map(existing.map(r => [r.externalRef, r.accountId]))
+
+  let alreadyImported = 0
+  let unresolvedAccount = 0
+  for (const e of entries) {
+    if (existingByRef.has(e.externalRef)) alreadyImported++
+    if (e.type === 'transfer') {
+      transferCount++
+      if (!e.resolvedAccountId || !e.transferAccountId) unresolvedAccount++
+    } else if (!e.resolvedAccountId) {
+      unresolvedAccount++
+    }
+    e.alreadyImported = existingByRef.has(e.externalRef)
+    e.existingAccountId = existingByRef.get(e.externalRef) || null
+  }
+
+  const result = entries.map(({ _order, ...e }) => e)
+  return {
+    operations: result,
+    totals: { found: result.length, alreadyImported, unresolvedAccount, transferCount }
+  }
+}
+
+/**
+ * Полный цикл preview для CSV-выписки Альфы: CSV text → preview JSON.
+ * @param {string} csvText  UTF-8 текст CSV (с BOM или без)
+ * @param {object} db       better-sqlite3 instance
+ * @returns {{operations, totals}}
+ */
+export function previewAlfaCsvFromCsv(csvText, db) {
+  const ops = parseAlfaCsvStatement(csvText || '')
+  return buildAlfaCsvPreview(ops, db)
 }

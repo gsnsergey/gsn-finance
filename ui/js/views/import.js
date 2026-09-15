@@ -1,13 +1,14 @@
-// Импорт банковских выписок (Альфа): загрузка PDF, превью-таблица,
+// Импорт банковских выписок (Альфа / Точка): загрузка файла, превью-таблица,
 // inline-редактирование счёта и категории, импорт выбранного.
 //
 // UX:
-//   1. Пользователь выбирает PDF.
-//   2. POST /api/import/alfa/preview → { operations, totals }.
+//   1. Пользователь выбирает банк (таб Альфа/Точка) и загружает файл
+//      (PDF или CSV для Альфы, CSV для Точки).
+//   2. POST /api/import/{alfa,tochka}/preview → { operations, totals }.
 //   3. Таблица: чекбокс | дата | MCC | merchant | маска | счёт (select) |
-//      категория (select) | сумма | комментарий. Уже импортированные —
-//      отмечены и disabled. Если маска не привязана к счёту — счёт «неизвестен»,
-//      пользователь выбирает вручную.
+//      категория (select) | сумма. Для переводов собственных средств (transfer)
+//      в колонке «Счёт» показываются ДВА select'а — источник и получатель.
+//      Уже импортированные — отмечены и disabled.
 //   4. Категория подставляется из import_rules (suggestedCategoryId +
 //      matchedRule). Если ничего не нашлось — пустой select.
 //   5. Кнопка «Импортировать выбранные» → POST /api/transactions/import.
@@ -17,21 +18,15 @@
 // появляется чекбокс «Сохранить как правило для MCC …» — правило создаётся
 // POST /api/import-rules перед записью операций (если отмечено).
 
-import { api, rub, toast } from '../api.js'
+import { api, rub, toast, escapeHtml } from '../api.js'
 
-function escapeHtml(v) {
-  if (v === null || v === undefined) return ''
-  return String(v).replace(/[&<>"']/g, ch => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  })[ch])
-}
 
-// POST бинарного файла (PDF) на /api/import/alfa/preview.
+// POST бинарного/текстового файла (PDF/CSV выписки) на preview.
 // Отдельный метод, потому что стандартный api.post всегда Content-Type: json.
-async function postPdf(path, file) {
+async function postFile(path, file, contentType) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/pdf' },
+    headers: { 'Content-Type': contentType },
     body: file
   })
   const text = await res.text()
@@ -44,14 +39,21 @@ async function postPdf(path, file) {
   return data
 }
 
+// Ключ уникальности правила маппинга — та же тройка, что и в UNIQUE-индексе
+// idx_import_rules_unique (миграция 017). accountId = NULL → глобальное правило.
+function ruleKey(matchType, matchValue, accountId) {
+  return `${matchType}|${String(matchValue ?? '').trim()}|${accountId || ''}`
+}
+
 export async function render(root) {
   // Состояние страницы в замыкании. Один источник истины для UI.
   const state = {
+    bankSource: 'alfa',       // 'alfa' | 'tochka' — выбранный таб
     accounts: [],
     categories: [],
     file: null,
-    preview: null,           // { operations, totals } от /api/import/alfa/preview
-    // Локальные правки пользователя: rowId -> { accountId, categoryId, saveAsRule }
+    preview: null,           // { operations, totals } от preview-эндпоинта
+    // Локальные правки пользователя: rowId -> { accountId, transferAccountId, categoryId, saveAsRule }
     edits: new Map(),
     loading: false
   }
@@ -69,24 +71,81 @@ export async function render(root) {
     return
   }
 
+  // Конфиг по банку — вынесен, чтобы табы и обработчики использовали один источник.
+  // У Альфы возможны два формата (PDF и CSV) — какой endpoint/Content-Type
+  // использовать, решает resolve(file) по расширению.
+  const BANK_CONFIG = {
+    alfa: {
+      label: 'Альфа',
+      icon: 'fa-credit-card',
+      accept: 'application/pdf,.pdf,text/csv,.csv',
+      buttonLabel: '📄 Выбрать PDF или CSV…',
+      intro: 'Загрузите выписку Альфа-Банка — PDF или CSV. Система разберёт операции, подберёт категории по правилам и покажет превью перед записью. Счёт определяется по номеру счёта или маске карты, переводы между своими счетами склеиваются в один transfer.',
+      emptyMsg: 'Похоже, в выписке нет распознаваемых операций. Проверьте, что это именно Альфа-выписка (CSV с шапкой operationDate,… или текстовый PDF, не скан).',
+      processingLabel: 'Разбираю выписку…',
+      resolve: (file) => (String(file && file.name || '').toLowerCase().endsWith('.csv')
+        ? { endpoint: '/api/import/alfa-csv/preview', contentType: 'text/csv', processingLabel: 'Разбираю CSV…' }
+        : { endpoint: '/api/import/alfa/preview', contentType: 'application/pdf', processingLabel: 'Разбираю PDF…' })
+    },
+    tochka: {
+      label: 'Точка',
+      icon: 'fa-university',
+      accept: 'text/csv,.csv',
+      buttonLabel: '📊 Выбрать CSV…',
+      intro: 'Загрузите CSV-выписку Точка-Банка (UTF-8, BOM допустим, разделитель «;»). Переводы собственных средств между своими счетами попадут в тип transfer — для них нужно выбрать 2 счёта (источник и получатель). Дубли по «Номеру документа» определятся автоматически.',
+      emptyMsg: 'Похоже, в выписке нет распознаваемых операций. Проверьте, что это именно CSV-выписка Точка-Банка с разделителем «;».',
+      processingLabel: 'Разбираю CSV…',
+      resolve: () => ({ endpoint: '/api/import/tochka/preview', contentType: 'text/csv', processingLabel: 'Разбираю CSV…' })
+    }
+  }
+
   function renderShell() {
+    const cfg = BANK_CONFIG[state.bankSource]
     root.innerHTML = `
       <div class="page-toolbar">
         <h2 class="page-title">Импорт банковской выписки</h2>
+        <div class="import-bank-tabs">
+          <button class="bank-tab ${state.bankSource === 'alfa' ? 'active' : ''}" data-bank="alfa">
+            <i class="fa fa-credit-card"></i> Альфа
+          </button>
+          <button class="bank-tab ${state.bankSource === 'tochka' ? 'active' : ''}" data-bank="tochka">
+            <i class="fa fa-university"></i> Точка
+          </button>
+        </div>
       </div>
-      <div class="import-intro">
-        Загрузите PDF-выписку Альфа-Банка — система разберёт операции, подберёт
-        категории по правилам и покажет превью перед записью.
-        Дубли по коду операции (CRD_…) определятся автоматически.
-      </div>
+      <div class="import-intro">${escapeHtml(cfg.intro)}</div>
+      ${state.bankSource === 'tochka' ? `
+        <div class="hint-warn" style="margin-bottom:12px">
+          <i class="fa fa-info-circle"></i>
+          Переводы собственных средств записываются как 2 связанные операции, но <b>балансы счетов не двигаются автоматически</b> —
+          формула «остатка» исключает transfer. После импорта перепроверьте балансы через «Счета и карты → Сверка».
+        </div>
+      ` : ''}
       <div class="import-upload">
-        <input type="file" id="import-file-input" accept="application/pdf,.pdf" style="display:none">
-        <button class="btn btn-primary" id="import-choose">📄 Выбрать PDF…</button>
+        <input type="file" id="import-file-input" accept="${cfg.accept}" style="display:none">
+        <button class="btn btn-primary" id="import-choose">${escapeHtml(cfg.buttonLabel)}</button>
         <span id="import-filename" class="import-filename"></span>
       </div>
       <div id="import-summary"></div>
       <div id="import-table"></div>
     `
+    // Табы переключают банк: меняется accept у input, интро и endpoint.
+    // При смене банка сбрасываем preview — это разные операции и даже разные
+    // поля (transfer есть только у Точки).
+    document.querySelectorAll('.bank-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const next = btn.dataset.bank
+        if (next === state.bankSource) return
+        state.bankSource = next
+        state.preview = null
+        state.edits.clear()
+        state.checked = new Map()
+        document.getElementById('import-filename').textContent = ''
+        document.getElementById('import-summary').innerHTML = ''
+        document.getElementById('import-table').innerHTML = ''
+        renderShell()
+      })
+    })
     document.getElementById('import-choose').addEventListener('click', () => {
       document.getElementById('import-file-input').click()
     })
@@ -104,29 +163,31 @@ export async function render(root) {
     state.categories.map(c => `<option value="${escapeHtml(c.id)}"${id === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')
 
   async function handleFile(file) {
+    const cfg = BANK_CONFIG[state.bankSource]
+    const transport = cfg.resolve(file)
     state.file = file
     document.getElementById('import-filename').textContent = file.name + ` (${(file.size / 1024).toFixed(1)} KB)`
     document.getElementById('import-summary').innerHTML = ''
-    document.getElementById('import-table').innerHTML = '<div class="loading">Разбираю PDF…</div>'
+    document.getElementById('import-table').innerHTML = `<div class="loading">${escapeHtml(transport.processingLabel)}</div>`
     state.preview = null
     state.edits.clear()
     state.checked = new Map()    // явно проставленные галочки пользователем
 
     try {
-      const preview = await postPdf('/api/import/alfa/preview', file)
+      const preview = await postFile(transport.endpoint, file, transport.contentType)
       state.preview = preview
       // Defaults: новые операции — checked, дубли — unchecked (они и так disabled).
       preview.operations.forEach((op, i) => state.checked.set(i, !op.alreadyImported))
       renderSummary()
       renderTable()
     } catch (e) {
-      toast('Не удалось разобрать PDF: ' + e.message, 'error')
-      document.getElementById('import-table').innerHTML = `<div class="empty"><div class="empty-title">Не удалось разобрать PDF</div>${escapeHtml(e.message)}</div>`
+      toast('Не удалось разобрать файл: ' + e.message, 'error')
+      document.getElementById('import-table').innerHTML = `<div class="empty"><div class="empty-title">Не удалось разобрать файл</div>${escapeHtml(e.message)}</div>`
     }
   }
 
   function renderSummary() {
-    const t = state.preview?.totals || { found: 0, alreadyImported: 0, unresolvedAccount: 0 }
+    const t = state.preview?.totals || { found: 0, alreadyImported: 0, unresolvedAccount: 0, transferCount: 0 }
     const el = document.getElementById('import-summary')
     if (!state.preview) { el.innerHTML = ''; return }
     el.innerHTML = `
@@ -134,6 +195,7 @@ export async function render(root) {
         <span class="badge badge-info">Найдено: ${t.found}</span>
         ${t.alreadyImported ? `<span class="badge badge-warn">Уже импортировано: ${t.alreadyImported}</span>` : ''}
         ${t.unresolvedAccount ? `<span class="badge badge-warn">Без счёта (нужно выбрать): ${t.unresolvedAccount}</span>` : ''}
+        ${t.transferCount ? `<span class="badge badge-info" title="Переводы между своими счетами — для каждой нужен счёт-источник и счёт-получатель">Переводов: ${t.transferCount}</span>` : ''}
       </div>
     `
   }
@@ -151,11 +213,11 @@ export async function render(root) {
   function renderTable() {
     const ops = state.preview?.operations || []
     const el = document.getElementById('import-table')
+    const cfg = BANK_CONFIG[state.bankSource]
     if (ops.length === 0) {
       el.innerHTML = `<div class="empty">
         <div class="empty-title">Операций не найдено</div>
-        Похоже, в выписке нет распознаваемых операций. Проверьте, что это
-        именно Альфа-выписка в текстовом PDF (не скан).
+        ${escapeHtml(cfg.emptyMsg)}
       </div>`
       return
     }
@@ -170,7 +232,7 @@ export async function render(root) {
               <th style="width:70px">MCC</th>
               <th>Merchant</th>
               <th>Маска</th>
-              <th>Счёт</th>
+              <th>Счёт${state.bankSource === 'tochka' ? ' (источник → получатель)' : ''}</th>
               <th>Категория</th>
               <th class="num">Сумма</th>
             </tr>
@@ -178,8 +240,10 @@ export async function render(root) {
           <tbody>
             ${ops.map((op, i) => {
               const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
+              const transferAccountId = getEdited(i, 'transferAccountId', op.transferAccountId || '')
               const categoryId = getEdited(i, 'categoryId', op.suggestedCategoryId || '')
               const isDup = op.alreadyImported
+              const isTransfer = op.type === 'transfer'
               // HOLD-операции (неподтверждённые резервы) подсвечиваем жёлтым.
               // Это второй класс наравне с .row-dup (уже импортировано).
               const isHold = op.confirmed === false
@@ -187,20 +251,58 @@ export async function render(root) {
               const rowClass = [
                 isDup && 'row-dup',
                 isHold && !isDup && 'row-hold',
-                isMinimal && !isDup && !isHold && 'row-minimal'
+                isMinimal && !isDup && !isHold && 'row-minimal',
+                isTransfer && !isDup && 'row-transfer'
               ].filter(Boolean).join(' ')
               const ruleBadge = op.matchedRule
                 ? `<span class="badge badge-info" title="Правило: ${escapeHtml(op.matchedRule.matchType)} = ${escapeHtml(op.matchedRule.matchValue)} (priority ${op.matchedRule.priority})">${escapeHtml(op.matchedRule.matchType)}</span>`
                 : ''
               const holdBadge = isHold
                 ? `<span class="badge badge-warn" title="Неподтверждённая операция (HOLD) — сумма зарезервирована банком, ещё не списана">HOLD</span>`
-                : isMinimal
-                  ? `<span class="badge badge-warn" title="Платёж через систему Альфа (штраф ГИБДД, СБП, ЖКХ) — нет карточных данных">платёж</span>`
-                  : ''
+                : isTransfer
+                  ? `<span class="badge badge-info" title="Перевод собственных средств между счетами — нужны счёт-источник и счёт-получатель">перевод</span>`
+                  : isMinimal
+                    ? `<span class="badge badge-warn" title="Платёж через систему банка (штраф, СБП, ЖКХ) — нет карточных данных">платёж</span>`
+                    : ''
               const saveAsRule = getEdited(i, 'saveAsRule', false)
               // Для «Сохранить как правило»: MCC или merchantName (хотя бы что-то для матча).
               const saveMcc = op.mcc
               const saveMerchant = op.merchantName
+
+              // Колонка «Счёт»: для transfer — 2 select'а (источник и получатель),
+              // иначе — 1 select. Для transfer категория не нужна (показываем прочерк).
+              const accountCell = isTransfer ? `
+                <select class="row-account-source" data-idx="${i}">${accountOpts(accountId)}</select>
+                <i class="fa fa-arrow-right" title="→"></i>
+                <select class="row-account-target" data-idx="${i}">${accountOpts(transferAccountId)}</select>
+                <div class="transfer-context" title="Счёт плательщика и счёт получателя по выписке">
+                  <span class="hint-muted">${escapeHtml((op.payerAccount || '') + ' → ' + (op.payeeAccount || ''))}</span>
+                  ${(op.resolvedAccountId && op.transferAccountId)
+                    ? '<span class="badge badge-ok" style="margin-left:4px" title="Счета определены автоматически по номерам из выписки">✓ авто</span>'
+                    : '<span class="hint-warn" style="margin-left:4px">нет привязки</span>'}
+                </div>
+              ` : `
+                <select class="row-account" data-idx="${i}">${accountOpts(accountId)}</select>
+                ${op.resolvedAccountId
+                  ? '<span class="badge badge-ok" style="margin-left:4px" title="Счёт определён автоматически по номеру из выписки">✓ авто</span>'
+                  : '<span class="hint-warn" style="margin-left:4px">нет привязки</span>'}
+              `
+              // Категория — для transfer не показываем select, только прочерк (там
+              // нет категорий по логике перемещения средств между своими счетами).
+              const categoryCell = isTransfer ? `<span class="hint-muted">—</span>` : `
+                <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
+                ${(() => {
+                  const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
+                  const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
+                  return showSave ? `
+                    <label class="hint-warn save-rule">
+                      <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
+                      Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
+                    </label>
+                  ` : ''
+                })()}
+              `
+
               return `
                 <tr class="${rowClass}" data-idx="${i}">
                   <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : (state.checked.get(i) !== false ? 'checked' : '')} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
@@ -208,29 +310,8 @@ export async function render(root) {
                   <td><code>${escapeHtml(op.mcc || '—')}</code></td>
                   <td class="merchant-cell">${escapeHtml(op.merchantName || op.description || '—')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
                   <td><code>${escapeHtml(op.panMask || '—')}</code></td>
-                  <td>
-                    <select class="row-account" data-idx="${i}">${accountOpts(accountId)}</select>
-                    ${!op.resolvedAccountId ? '<span class="hint-warn">нет привязки</span>' : ''}
-                  </td>
-                  <td>
-                    <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
-                    ${(() => {
-                      // Чекбокс «сохранить как правило» показываем в двух случаях:
-                      //   1. Категория была подставлена через matchedRule, но пользователь
-                      //      сменил её вручную (отличается от suggestedCategoryId).
-                      //   2. Категория была выбрана вручную (suggestedCategoryId отсутствует).
-                      // В обоих случаях можно построить правило по MCC/merchant для будущих
-                      // импортов. Автоотмечен по умолчанию — пользователь может снять галку.
-                      const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
-                      const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
-                      return showSave ? `
-                        <label class="hint-warn save-rule">
-                          <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
-                          Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
-                        </label>
-                      ` : ''
-                    })()}
-                  </td>
+                  <td class="account-cell">${accountCell}</td>
+                  <td class="category-cell">${categoryCell}</td>
                   <td class="num num-${op.type}">${op.type === 'income' ? '+' : ''}${rub(op.type === 'expense' ? -op.amount : op.amount)}</td>
                 </tr>
               `
@@ -264,9 +345,21 @@ export async function render(root) {
         state.checked.set(Number(e.target.dataset.idx), e.target.checked)
       })
     })
+    // Счёт — обычный (1 select)
     el.querySelectorAll('.row-account').forEach(sel => {
       sel.addEventListener('change', e => {
         setEdited(Number(e.target.dataset.idx), { accountId: e.target.value })
+      })
+    })
+    // Счёт для transfer (2 select'а: source и target)
+    el.querySelectorAll('.row-account-source').forEach(sel => {
+      sel.addEventListener('change', e => {
+        setEdited(Number(e.target.dataset.idx), { accountId: e.target.value })
+      })
+    })
+    el.querySelectorAll('.row-account-target').forEach(sel => {
+      sel.addEventListener('change', e => {
+        setEdited(Number(e.target.dataset.idx), { transferAccountId: e.target.value })
       })
     })
     el.querySelectorAll('.row-category').forEach(sel => {
@@ -341,13 +434,24 @@ export async function render(root) {
       const op = ops[i]
       const checked = document.querySelector(`.row-check[data-idx="${i}"]`)?.checked
       if (!checked) continue
+      const isTransfer = op.type === 'transfer'
       const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
       if (!accountId) {
-        toast(`Строка ${i + 1}: выберите счёт`, 'error')
+        toast(`Строка ${i + 1}: выберите счёт-источник`, 'error')
         return
       }
-      const categoryId = getEdited(i, 'categoryId', op.suggestedCategoryId || '') || null
-      items.push({
+      // Для transfer дополнительно требуется счёт-получатель.
+      // Бэкенд сам проверит, что source != target.
+      let transferAccountId = null
+      if (isTransfer) {
+        transferAccountId = getEdited(i, 'transferAccountId', '')
+        if (!transferAccountId) {
+          toast(`Строка ${i + 1} (перевод): выберите счёт-получатель`, 'error')
+          return
+        }
+      }
+      const categoryId = isTransfer ? null : (getEdited(i, 'categoryId', op.suggestedCategoryId || '') || null)
+      const item = {
         externalRef: op.externalRef,
         accountId,
         date: op.date,
@@ -356,8 +460,11 @@ export async function render(root) {
         currency: op.currency,
         categoryId,
         mcc: op.mcc,
-        merchantName: op.merchantName
-      })
+        merchantName: op.merchantName,
+        bankSource: state.bankSource
+      }
+      if (isTransfer) item.transferAccountId = transferAccountId
+      items.push(item)
     }
     if (items.length === 0) {
       toast('Не выбрано ни одной операции', 'error')
@@ -365,13 +472,28 @@ export async function render(root) {
     }
 
     // Сначала создаём правила «Сохранить как…» (если пользователь их отметил).
+    // Существующие правила подгружаем один раз и проверяем ДО POST: тот же
+    // matchType+matchValue+accountId теперь блокируется UNIQUE-индексом
+    // (миграция 017), поэтому не шлём заведомо падающий дубль.
+    const existingRuleKeys = new Set()
+    if (ops.some((_, i) => state.edits.get(i)?.saveAsRule)) {
+      try {
+        const rules = await api.get('/api/import-rules')
+        for (const r of rules) existingRuleKeys.add(ruleKey(r.matchType, r.matchValue, r.accountId))
+      } catch (e) {
+        // Справочник недоступен — не блокируем импорт: UNIQUE-индекс на
+        // бэкенде всё равно не даст создать дубль.
+        console.warn('не удалось загрузить правила маппинга', e)
+      }
+    }
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i]
       const save = state.edits.get(i)?.saveAsRule
       const categoryId = getEdited(i, 'categoryId', op.suggestedCategoryId || '')
       const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
       if (!save || !categoryId || !op.mcc) continue
-      // Не создаём дубль, если правило с тем же matchValue+matchType уже есть.
+      const key = ruleKey('mcc', op.mcc, accountId)
+      if (existingRuleKeys.has(key)) continue // правило уже есть — не дублируем
       try {
         await api.post('/api/import-rules', {
           accountId: accountId || null,
@@ -380,8 +502,9 @@ export async function render(root) {
           categoryId,
           priority: 100
         })
+        existingRuleKeys.add(key)
       } catch (e) {
-        // Дубль — игнорируем (это норма для глобальных правил).
+        // Гонка (правило создано параллельно) — не ошибка импорта операций.
         if (!String(e.message).includes('UNIQUE') && !String(e.message).includes('constraint')) {
           console.warn('не удалось сохранить правило для MCC', op.mcc, e)
         }

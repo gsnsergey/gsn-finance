@@ -11,7 +11,7 @@
 
 ```js
 // ui/js/views/foo.js
-import { api, rub, toast } from '../api.js'
+import { api, rub, toast, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 
 export async function render(root) {
@@ -37,12 +37,10 @@ export async function render(root) {
 }
 
 function openFooForm(root, item) { /* см. §2 */ }
-
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
 ```
+
+> `escapeHtml` / `escapeAttr` / `cssColor` — из `api.js`, **не определяй их локально**.
+> Раньше рецепт показывал локальную реализацию, из-за чего она разошлась по 7 вьюхам.
 
 Регистрация: `app.js` → `import { render as foo } from './views/foo.js'` + `register('/foo', foo)`;
 `router.js` → в `titleMap`: `'/foo': 'Что-то'`;
@@ -84,6 +82,33 @@ function openFooForm(root, item) {
 
 **Типы полей:** `text`, `number`, `date`, `select`, `textarea`, `checkbox`,
 `toggle`, `combobox`, `category-select`, `color` (см. `modal.js:19-122`).
+
+**Если полей не хватает** — динамический список, своя форма внутри модалки, —
+не собирай диалог вручную: у `openModal` есть режим своего тела.
+
+```js
+let host = null
+function draw() {                       // перерисовывается после каждой мутации
+  host.innerHTML = `<div class="my-list">…</div>
+    <form class="my-add-form"><input name="x" required><button class="btn btn-primary">+ Добавить</button></form>`
+  host.querySelector('form').addEventListener('submit', async e => {
+    e.preventDefault()
+    await api.post('/api/…', { x: host.querySelector('[name=x]').value })
+    draw()                              // диалог при этом живёт
+  })
+}
+openModal({
+  title: 'Заголовок',
+  wide: true,                           // 520px вместо 480
+  closeLabel: 'Готово',
+  body: (bodyHost) => { host = bodyHost; draw() },
+  onClose: () => render(root),          // сработает при ЛЮБОМ способе закрытия
+})
+```
+
+Контейнер в этом режиме — `div`, а не `form` (вложенные `<form>` браузер не
+поддерживает), поэтому свою форму вешай сам в `body`/`onMount`. Живой пример —
+модалка «Карты счёта» в `accounts.js`.
 
 ## 3. CRUD-страница (list + create + edit + delete)
 

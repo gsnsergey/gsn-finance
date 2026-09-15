@@ -1,4 +1,4 @@
-import { api, rub, toast } from '../api.js'
+import { api, rub, toast, cssColor, escapeHtml, escapeAttr } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { CATEGORY_ICONS, CATEGORY_EMOJIS, iconHTML } from '../data/categoryIcons.js'
 import { BROKER_PROVIDERS as PROVIDERS, providerLabel } from '../data/brokerProviders.js'
@@ -35,17 +35,17 @@ export async function render(root) {
         <button class="btn btn-primary btn-sm" id="add-cat">+ Добавить</button>
       </span>
     </div>
-    <div class="table-wrap table-wrap-compact"><table class="table table-compact" id="cats-table">
+    <div class="table-wrap"><table class="table table-compact" id="cats-table">
       <thead><tr><th style="width:32px"></th><th>Название</th><th style="width:90px">Тип</th><th style="width:50px">Цвет</th><th style="width:80px"></th></tr></thead>
       <tbody>
         ${active.length === 0
           ? '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Нет активных категорий</td></tr>'
           : active.map(c => `
             <tr data-id="${c.id}">
-              <td style="color:${c.color}">${iconHTML(c.icon)}</td>
+              <td style="color:${cssColor(c.color, 'var(--text)')}">${iconHTML(c.icon)}</td>
               <td>${escapeHtml(c.name)}</td>
               <td><span class="cat-type cat-type-${c.type}">${c.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-              <td><span class="cat-color-swatch" style="background:${c.color}" title="${escapeHtml(c.color || '')}"></span></td>
+              <td><span class="cat-color-swatch" style="background:${cssColor(c.color)}" title="${escapeHtml(c.color || '')}"></span></td>
               <td>
                 <div class="row-actions">
                   <button class="btn btn-sm" data-action="edit" data-id="${c.id}" title="Редактировать">✎</button>
@@ -60,15 +60,15 @@ export async function render(root) {
 
     ${archived.length > 0 ? `
       <div class="section-title">Архив (${archived.length})</div>
-      <div class="table-wrap table-wrap-compact"><table class="table table-compact">
+      <div class="table-wrap"><table class="table table-compact">
         <thead><tr><th style="width:32px"></th><th>Название</th><th style="width:90px">Тип</th><th style="width:50px">Цвет</th><th style="width:80px"></th></tr></thead>
         <tbody>
           ${archived.map(c => `
             <tr>
-              <td style="color:${c.color}">${iconHTML(c.icon)}</td>
+              <td style="color:${cssColor(c.color, 'var(--text)')}">${iconHTML(c.icon)}</td>
               <td>${escapeHtml(c.name)}</td>
               <td><span class="cat-type cat-type-${c.type}">${c.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
-              <td><span class="cat-color-swatch" style="background:${c.color}" title="${escapeHtml(c.color || '')}"></span></td>
+              <td><span class="cat-color-swatch" style="background:${cssColor(c.color)}" title="${escapeHtml(c.color || '')}"></span></td>
               <td><button class="btn btn-sm" data-action="unarchive" data-id="${c.id}" title="Восстановить">↺</button></td>
             </tr>
           `).join('')}
@@ -90,7 +90,7 @@ export async function render(root) {
         </div>
       </div>
     ` : `
-      <div class="table-wrap table-wrap-compact"><table class="table table-compact">
+      <div class="table-wrap"><table class="table table-compact">
         <thead><tr><th>Провайдер</th><th>brokerAccountId</th><th>Метка</th><th>Токен</th><th>Последний успех</th><th style="width:80px"></th></tr></thead>
         <tbody>
           ${creds.map(c => `
@@ -99,7 +99,7 @@ export async function render(root) {
               <td><code style="font-size:12px">${escapeHtml(c.brokerAccountId)}</code></td>
               <td>${escapeHtml(c.label || '')}</td>
               <td><code style="font-size:12px">${escapeHtml(c.tokenMask)}</code></td>
-              <td style="font-size:12px;color:var(--muted)">${c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleString('ru-RU') : '—'}${c.lastError ? ` <span style="color:#dc2626" title="${escapeHtml(c.lastError)}">⚠</span>` : ''}</td>
+              <td style="font-size:12px;color:var(--muted)">${c.lastUsedAt ? new Date(c.lastUsedAt).toLocaleString('ru-RU') : '—'}${c.lastError ? ` <span style="color:var(--danger)" title="${escapeHtml(c.lastError)}">⚠</span>` : ''}</td>
               <td>
                 <div class="row-actions">
                   <button class="btn btn-sm" data-action="cred-edit" data-id="${c.id}" title="Редактировать">✎</button>
@@ -277,10 +277,6 @@ function openCategoryForm(root, category) {
   })
 }
 
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
-function escapeAttr(v) { return escapeHtml(v) }
 
 // --- Broker credentials (API-токены брокеров) -----------------------------
 

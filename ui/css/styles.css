@@ -1,16 +1,144 @@
+/* Токены — 1:1 с Gentelella v4 (`src/scss/v4/_tokens.scss`).
+   Значения сверены с npm-пакетом gentelella@4.0.1.
+   Референс: https://preview.colorlib.com/theme/gentelella/ */
 :root {
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --text: #1a1f2c;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --success: #16a34a;
-  --danger: #dc2626;
-  --warning: #f59e0b;
-  --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04);
-  --radius: 10px;
+  /* Бренд: teal #1ABB9C — ключевой признак стиля Gentelella v4. */
+  --primary: #1abb9c;
+  /* Прозрачные производные акцента: заливки hover/selected и focus-ring. */
+  --primary-lt: rgba(26,187,156,0.08);
+  --primary-ring: rgba(26,187,156,0.18);
+  /* Бренд-цвет для ТЕКСТА, заливок под белым текстом и индикаторов
+     фокуса: яркий #1abb9c на белом даёт 2.43:1 — ниже AA (4.5 для
+     текста) и ниже 3:1, которое WCAG 1.4.11 требует для фокуса.
+     Тот же оттенок, но глубже — 5.25:1. --primary остаётся ярким
+     для декора: бренд-марка, тинты, hover-границы. */
+  --primary-strong: #0e7a68;
+  --primary-strong-dk: #0b6355;
+
+  /* Семантическая палитра референса (11 цветов + производные). */
+  --blue: #066fd1;
+  --azure: #4299e1;
+  --green: #2fb344;
+  --lime: #74b816;
+  --yellow: #f59f00;
+  --orange: #f76707;
+  --red: #d63939;
+  --pink: #d6336c;
+  --purple: #ae3ec9;
+  --indigo: #4263eb;
+  --cyan: #17a2b8;
+
+  --green-lt: rgba(47,179,68,0.08);
+  --red-lt: rgba(214,57,57,0.08);
+  --red-ring: rgba(214,57,57,0.20);
+  --yellow-lt: rgba(245,159,0,0.12);
+  --blue-lt: rgba(6,111,209,0.08);
+  --azure-lt: rgba(66,153,225,0.08);
+  --purple-lt: rgba(174,62,201,0.08);
+  --slate-lt: rgba(148,163,184,0.08);
+
+  /* Поверхности, текст, границы. */
+  --body-bg: #f5f7fb;
+  --bg-surface: #ffffff;
+  --bg-surface-secondary: #f9fafb;
+  --border-color: #e6e7eb;
+  --border-color-light: #eff0f3;
+  --border-translucent: rgba(4,32,69,0.08);
+  --text: #1e2633;
+  --text-secondary: #626d7d;
+  --text-muted: #7e8896;
+  --text-disabled: #c0c7cf;
+
+  /* Sidebar — тёмный по умолчанию (отличие от прежней светлой панели:
+     выбран владельцем как «полный Gentelella»). */
+  --sidebar-bg: #1a2332;
+  --sidebar-hover: rgba(255,255,255,0.04);
+  --sidebar-active: rgba(26,187,156,0.10);
+  --sidebar-text: #7b8fa3;
+  --sidebar-text-hover: #c5d0dc;
+  --sidebar-text-active: #ffffff;
+  --sidebar-border: rgba(255,255,255,0.06);
+  --sidebar-w: 252px;
+
+  /* Геометрия: 4/6/8 как в референсе (было одно 10px). */
+  --radius: 6px;
+  --radius-sm: 4px;
+  --radius-lg: 8px;
+
+  /* Spacing scale — 4px база, как в референсе. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Тени «near-invisible» — в референсе тень почти не читается, объём даёт рамка. */
+  --shadow: rgba(30,38,51,0.04) 0 2px 4px 0;
+  --shadow-card: 0 0 0 1px var(--border-translucent), rgba(30,38,51,0.04) 0 2px 4px 0;
+  --shadow-pop: 0 8px 24px rgba(15,23,42,0.12), 0 0 0 1px var(--border-translucent);
+  --shadow-modal: 0 24px 48px rgba(15,23,42,0.18), 0 0 0 1px var(--border-translucent);
+
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Мягкие hover-заливки (тёмные/светлые поверхности без токена). */
+  --hover: rgba(0,0,0,0.04);
+  --hover-soft: rgba(0,0,0,0.02);
+
+  /* ── Алиасы: исторические имена проекта. Все вьюхи и половина CSS
+     ссылаются на них, поэтому они остаются рабочими и после перехода
+     на канонические имена референса. ───────────────────────────────── */
+  --bg: var(--body-bg);
+  --surface: var(--bg-surface);
+  --border: var(--border-color);
+  --accent: var(--primary-strong);
+  --accent-hover: var(--primary-strong-dk);
+  --warning: var(--yellow);
+
+  /* --muted / --success / --danger — семантические цвета проекта, поэтому для
+     текста они намеренно темнее одноимённых «филловых» цветов референса:
+     его --text-muted #7e8896 даёт 3.59:1 на белом, --green #2fb344 — 2.74:1,
+     то есть ниже WCAG AA (4.5:1). --green/--red остаются в палитре как цвета
+     заливок и полос. Замеры и альтернативы — DESIGN.md §2.9. */
+  --muted: var(--text-secondary);   /* 5.0–5.3:1 на светлом */
+  --success: #178030;               /* 5.1–5.5:1 */
+  --danger: #b02c2c;                /* 5.9–6.5:1 */
+}
+
+/* Тёмная тема: значения заложены сейчас, переключателя пока нет —
+   включается атрибутом <html data-theme="dark">. Алиасы выше разрешаются
+   на этапе использования, поэтому перекрашиваются автоматически. */
+[data-theme="dark"] {
+  --body-bg: #0f1623;
+  --bg-surface: #1a2332;
+  --bg-surface-secondary: #141d2b;
+  --border-color: rgba(255,255,255,0.08);
+  --border-color-light: rgba(255,255,255,0.05);
+  --border-translucent: rgba(255,255,255,0.08);
+  --text: #e6ebf2;
+  --text-secondary: #b3bccb;
+  --text-muted: #8a93a3;
+  --text-disabled: #5a6473;
+  --primary-lt: rgba(26,187,156,0.14);
+  --green-lt: rgba(47,179,68,0.16);
+  --red-lt: rgba(214,57,57,0.16);
+  --yellow-lt: rgba(245,159,0,0.16);
+  --blue-lt: rgba(6,111,209,0.18);
+  --azure-lt: rgba(66,153,225,0.16);
+  --purple-lt: rgba(174,62,201,0.16);
+  --hover: rgba(255,255,255,0.05);
+  --hover-soft: rgba(255,255,255,0.03);
+  --shadow: rgba(0,0,0,0.4) 0 2px 4px 0;
+  --shadow-card: 0 0 0 1px var(--border-translucent), rgba(0,0,0,0.3) 0 2px 4px 0;
+  /* На тёмном фоне затемнённые текстовые варианты нечитаемы (#178030 на
+     #1a2332 — 2.9:1), поэтому возвращаем светлые цвета референса: они
+     рассчитаны на тёмный сайдбар/поверхности. */
+  --muted: var(--text-muted);
+  --success: var(--green);
+  --danger: var(--red);
 }
 
 * { box-sizing: border-box; }
@@ -18,19 +146,63 @@
 html, body {
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  font-family: var(--font);
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
-  line-height: 1.5;
+  /* 1.4286 — межстрочный референса (14px × 1.4286 = 20px). */
+  line-height: 1.4286;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   /* Страница не должна скроллиться влево-вправо: горизонтальный скролл
      допустим только внутри таблицы (.table-wrap). */
   overflow-x: hidden;
 }
 
+/* Тонкий скроллбар как в референсе (6px, без рельса). */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 3px; }
+
+/* Единый keyboard-focus. :focus-visible — чтобы клик мышью не рисовал рамку;
+   у полей ввода свою рамку рисует box-shadow, поэтому ниже outline снят. */
+:focus { outline: none; }
+:focus-visible {
+  outline: 2px solid var(--primary-strong);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+.form-field input:focus-visible,
+.form-field select:focus-visible,
+.form-field textarea:focus-visible,
+.filters-bar select:focus-visible,
+.filters-bar--inline input:focus-visible,
+.filters-bar--inline select:focus-visible,
+.category-select-search:focus-visible,
+.color-hex:focus-visible,
+.combobox-input:focus-visible { outline: none; }
+
+/* Ссылки: teal и без подчёркивания, подчёркивание только на hover — как в
+   референсе. Правила не было вообще, поэтому «голые» ссылки без класса
+   (напр. import-rules.js:56) рендерились дефолтным синим браузера
+   rgb(0,0,238), выбиваясь из палитры. Компонентные правила (.brand, .nav a,
+   .card-link, a.btn, .cards-badge) объявлены ниже по файлу и при равной
+   специфичности перебивают эти по порядку следования. */
+a { color: var(--primary-strong); text-decoration: none; }
+a:hover { text-decoration: underline; }
+/* Компонентные ссылки не подчёркиваются на hover: их собственные правила
+   (.brand, .card-link) — один класс (0,1,0), а `a:hover` — (0,1,1), поэтому
+   проигрывают по специфичности, а не по порядку. На карточке дашборда это
+   подчёркивало бы весь текст карточки. .cards-badge:hover объявлен ниже и
+   намеренно подчёркивается. */
+.brand:hover,
+.nav a:hover,
+.card-link:hover,
+a.btn:hover { text-decoration: none; }
+
 .app {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
   /* Гарантируем, что .app занимает всю высоту вьюпорта, даже если контент
      короче — иначе .content не получит высоту для передачи детям. */
   min-height: 100vh;
@@ -38,13 +210,18 @@ html, body {
 }
 
 /* === Sidebar === */
+/* Тёмная панель (#1a2332) — главный визуальный признак Gentelella v4.
+   Flex-колонка: бренд зафиксирован, .nav скроллится сам (иначе на низких
+   вьюпортах часть пунктов меню обрезалась бы). */
 .sidebar {
-  background: var(--surface);
-  border-right: 1px solid var(--border);
-  padding: 16px 12px;
-  /* Плавное сворачивание при переключении состояния (.app.sidebar-hidden). */
+  display: flex;
+  flex-direction: column;
+  background: var(--sidebar-bg);
+  padding: var(--space-2) var(--space-2) 0;
+  /* Плавное сворачивание при переключении состояния (.app.sidebar-hidden);
+     overflow: hidden обрезает содержимое по ширине во время анимации. */
   overflow: hidden;
-  transition: width 0.2s ease;
+  transition: width 0.22s cubic-bezier(0.2, 0, 0, 1);
 }
 /* Скрытая боковая панель: колонка грида 0, сайдбар не виден,
    overflow скрыт, чтобы контент не вылезал при transition. */
@@ -53,76 +230,125 @@ html, body {
   width: 0;
   padding-left: 0;
   padding-right: 0;
-  border-right-color: transparent;
 }
 .brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px 16px;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--text);
+  gap: 10px;
+  height: 56px;
+  padding: 0 var(--space-3);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--sidebar-text-active);
   text-decoration: none;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--sidebar-border);
+  margin-bottom: var(--space-2);
 }
+/* Марка бренда: сплошной teal-квадрат (был градиент синий→фиолетовый —
+   градиент не встречается в референсе ни разу). */
 .brand-dot {
-  width: 24px; height: 24px;
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
-  border-radius: 6px;
+  width: 28px; height: 28px;
+  flex-shrink: 0;
+  background: var(--primary);
+  border-radius: var(--radius);
 }
-.nav { display: flex; flex-direction: column; gap: 2px; }
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-3);
+}
 .nav a {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  color: var(--muted);
+  min-height: 32px;
+  padding: 6px var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--sidebar-text);
   text-decoration: none;
-  font-weight: 500;
-  transition: all 0.15s;
+  font-size: 13px;
+  font-weight: 400;
+  transition: background 0.12s, color 0.12s;
 }
-.nav a:hover { background: rgba(0,0,0,0.04); color: var(--text); }
-.nav a.active { background: rgba(37,99,235,0.08); color: var(--accent); }
+.nav a:hover {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text-hover);
+}
+.nav a.active {
+  background: var(--sidebar-active);
+  color: var(--sidebar-text-active);
+  font-weight: 500;
+}
 .nav-icon {
   width: 18px;
   min-width: 18px;
   text-align: center;
-  margin-right: 10px;
   font-size: 15px;
+  opacity: 0.5;
 }
-.nav-section { padding: 16px 12px 6px; font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 600; letter-spacing: 0.04em; }
+.nav a:hover .nav-icon,
+.nav a.active .nav-icon { opacity: 0.85; }
+.nav-section {
+  padding: 16px var(--space-3) 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  /* Цвет как у пунктов меню (--sidebar-text, 4.74:1 — проходит AA). Референс
+     даёт здесь alpha 0.5 (2.26:1 — нечитаемо), 0.7 давала 3.06:1, то есть всё
+     ещё ниже AA, а поднять без выравнивания с меню нельзя. Иерархия сохранена
+     другими средствами: 10px против 14px, uppercase, letter-spacing и отбивка. */
+  color: var(--sidebar-text);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
 
 /* === Content === */
 .content { display: flex; flex-direction: column; min-height: 0; }
+/* Топбар — 56px, полупрозрачный с блюром (как в референсе). */
 .topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 18px 32px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  justify-content: flex-start;
+  gap: var(--space-3);
+  height: 56px;
+  padding: 0 var(--space-5);
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-color);
   flex: 0 0 auto;
 }
-.topbar h1 { font-size: 20px; margin: 0; font-weight: 600; }
-.topbar-meta { font-size: 13px; color: var(--muted); }
+[data-theme="dark"] .topbar { background: rgba(20,29,43,0.85); }
+.topbar h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: -0.1px; }
+/* Мета прижата к правому краю — раньше space-between растаскивал три
+   элемента и заголовок «висел» по центру. */
+.topbar-meta { font-size: 13px; color: var(--muted); margin-left: auto; }
 
 /* Кнопка-гамбургер в топбаре: переключает видимость боковой панели.
    Должна выглядеть как часть топбара (без рамки, как у бренда), но
    подсвечиваться при наведении. */
 .sidebar-toggle {
-  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
   border: none;
-  padding: 6px 10px;
-  margin-right: 8px;
-  border-radius: 6px;
-  color: var(--muted);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
   font-size: 16px;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.12s, color 0.12s;
 }
-.sidebar-toggle:hover { background: rgba(0,0,0,0.04); color: var(--text); }
-.sidebar-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.sidebar-toggle:hover { background: var(--body-bg); color: var(--text); }
+.sidebar-toggle:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 1px; }
 /* Когда сайдбар скрыт — иконка-стрелка показывает «развернуть»,
    когда виден — «свернуть». Это просто визуальный сигнал, не критично. */
 .app.sidebar-hidden .sidebar-toggle .fa-bars::before { content: "\f0c9"; } /* bars (по умолчанию) */
@@ -132,11 +358,20 @@ html, body {
    флекс-детям не разрешают сжиматься ниже их контента и overflow: auto
    в .table-wrap не сработает. */
 .view {
-  padding: 24px 32px;
+  padding: var(--space-5);
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Страховка на случай, когда содержимое выше вьюпорта: скроллится сама
+     область контента, а НЕ body. Без этого body становился скроллером
+     (у него overflow-x: hidden, из-за чего overflow-y вычисляется в auto),
+     и сайдбар с position: static уезжал вверх вместе со страницей — на
+     /import-rules форма + список правил дают 1912px при вьюпорте 900.
+     Так же ведёт себя референс: там скроллится .main, а .sidebar и .topbar
+     зафиксированы. На табличных страницах контент помещается, скроллбар
+     не появляется — таблица по-прежнему скроллится внутри .table-wrap. */
+  overflow-y: auto;
 }
 
 /* === Cards === */
@@ -147,40 +382,46 @@ html, body {
 .cards {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 16px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
   box-shadow: var(--shadow);
 }
-.card-label { font-size: 12px; color: var(--muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.04em; }
-.card-value { font-size: 24px; font-weight: 700; margin-top: 6px; }
-.card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.card-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  line-height: 1.3;
+}
+.card-value { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; line-height: 1.2; margin-top: 6px; }
+.card-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
 /* Карточка-ссылка (дашборд): обёрнута в <a>, клик ведёт в раздел.
    Тонкий hover/focus, чтобы намекнуть на интерактивность, без перегруза. */
 .card-link {
   display: block;
   text-decoration: none;
   color: inherit;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 .card-link:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-  border-color: var(--accent);
+  box-shadow: var(--shadow-card);
+  border-color: var(--primary);
 }
 .card-link:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary-strong);
   outline-offset: 2px;
 }
 /* Кликабельная строка «Последние операции» — тот же hover-эффект, что у tr в таблице. */
 .table .tx-row { cursor: pointer; }
-.table .tx-row:hover td { background: rgba(37,99,235,0.04); }
-.table .tx-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.table .tx-row:hover td { background: var(--primary-lt); }
+.table .tx-row:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: -2px; }
 .card.accent .card-value { color: var(--accent); }
 .card.success .card-value { color: var(--success); }
 .card.danger .card-value { color: var(--danger); }
@@ -189,7 +430,7 @@ html, body {
 .table-wrap {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: auto;
   box-shadow: var(--shadow);
   /* Растягиваем таблицу на всю оставшуюся высоту .view. Скроллится
@@ -202,24 +443,24 @@ html, body {
 .table {
   width: 100%;
   border-collapse: collapse;
+  font-size: 13px;
   /* Если контент шире контейнера — браузер сам покажет горизонтальный
      скроллбар внутри .table-wrap. Не даём раздувать grid/flex треки. */
   table-layout: auto;
 }
 .table th, .table td {
-  padding: 8px 12px;
+  padding: 8px 16px;
   text-align: left;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
+  border-bottom: 1px solid var(--border-color-light);
+  vertical-align: middle;
 }
 .table th {
   font-size: 11px;
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
-  /* Непрозрачный фон (был rgba(0,0,0,0.02) — сливался на тёмных строках).
-     Чуть темнее var(--surface), чтобы контраст с телом таблицы был заметным. */
-  background: #f0f2f7;
+  letter-spacing: 0.3px;
+  background: var(--bg-surface-secondary);
   border-bottom: 1px solid var(--border);
   /* Шапка прилипает к верху при прокрутке таблицы */
   position: sticky;
@@ -227,7 +468,12 @@ html, body {
   z-index: 1;
 }
 .table tr:last-child td { border-bottom: none; }
-.table tr:hover td { background: rgba(0,0,0,0.02); }
+/* Текст ячеек оставлен основным (--text), а не --text-secondary как в
+   референсе: finans — реестр операций, приглушение всех колонок заметно
+   бьёт по читаемости. Остальные признаки (padding 8/16, светлая шапка,
+   тонкие разделители, заливка строки) взяты из референса. */
+.table td { color: var(--text); }
+.table tr:hover td { background: var(--bg-surface-secondary); }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Кнопки действий в строке таблицы (✎ / × / ⊘ и т. п.) — в одну линию,
@@ -242,42 +488,60 @@ html, body {
 .row-actions .btn-sm { line-height: 1; }
 
 /* === P/L (portfolio) и любые отрицательные суммы ===
-   profit-pos — зелёный для прибыли (намеренно, не из скоупа).
+   profit-pos — зелёный для прибыли; переведён на палитру референса
+   (--green) вместо отдельного #1a8754.
    profit-neg + amt-neg — оба красные, единый --danger для консистентности
    (был отдельный #c1352f у profit-neg, теперь оба на --danger). */
-.profit-pos { color: #1a8754; font-variant-numeric: tabular-nums; }
+.profit-pos { color: var(--success); font-variant-numeric: tabular-nums; }
 .profit-neg,
 .amt-neg { color: var(--danger); font-variant-numeric: tabular-nums; }
 
-/* === Buttons === */
+/* === Buttons ===
+   Высота 32 / radius 4 / кегль 12.5 — как .btn в референсе. Базовый .btn
+   соответствует тамошнему .btn-outline: светлая рамка, почти невидимая тень. */
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
+  justify-content: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface);
-  color: var(--text);
-  font-size: 13px;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow);
+  font-family: inherit;
+  font-size: 12.5px;
   font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
 }
-.btn:hover { background: rgba(0,0,0,0.04); }
+.btn:hover { background: var(--bg-surface-secondary); color: var(--text); }
 .btn-primary {
   background: var(--accent);
   color: white;
-  border-color: var(--accent);
+  border-color: var(--accent-hover);
 }
-.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+  color: white;
+}
+/* Danger — красный outline, а не сплошная заливка: в таблицах реестра
+   сплошные красные кнопки в каждой строке слишком агрессивны. */
 .btn-danger {
   color: var(--danger);
-  border-color: rgba(220,38,38,0.2);
-  background: rgba(220,38,38,0.04);
+  border-color: var(--red-ring);
+  background: var(--red-lt);
 }
-.btn-danger:hover { background: rgba(220,38,38,0.1); }
-.btn-sm { padding: 4px 8px; font-size: 12px; }
+.btn-danger:hover { background: rgba(214,57,57,0.16); color: var(--danger); }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+/* Кнопки-ссылки (<a class="btn">): у ссылок по умолчанию подчёркивание,
+   для кнопки это лишнее. Остальные ссылки проекта гасят его сами. */
+a.btn { text-decoration: none; }
 
 /* === Empty / Loading === */
 .empty {
@@ -288,63 +552,79 @@ html, body {
 .empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
 .loading { padding: 24px; text-align: center; color: var(--muted); }
 
-/* === Toast === */
+/* === Toast ===
+   Светлая карточка с цветной левой полосой (референс), а не сплошная
+   тёмная/цветная плашка: сплошной цвет читался как алерт поверх контента. */
 .toast {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
-  padding: 10px 16px;
-  background: var(--text);
-  color: white;
-  border-radius: 8px;
+  bottom: 16px;
+  right: 16px;
+  padding: 10px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
   font-size: 13px;
+  font-weight: 500;
+  max-width: 360px;
   opacity: 0;
   pointer-events: none;
-  transform: translateY(10px);
-  transition: all 0.2s;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s cubic-bezier(0.2, 0, 0, 1);
   z-index: 100;
 }
 .toast.show { opacity: 1; transform: translateY(0); }
-.toast.error { background: var(--danger); }
-.toast.success { background: var(--success); }
+.toast.error { border-left: 3px solid var(--danger); padding-left: 11px; }
+.toast.success { border-left: 3px solid var(--success); padding-left: 11px; }
 
 /* === Section === */
 .section-title {
-  font-size: 13px;
+  font-size: 12px;
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
-  margin: 24px 0 12px;
-  letter-spacing: 0.04em;
+  margin: var(--space-5) 0 var(--space-3);
+  letter-spacing: 0.4px;
 }
 
 /* === Form === */
 .form-row { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
 .form-row label { font-size: 13px; color: var(--muted); min-width: 100px; }
 .form-row input, .form-row select {
-  padding: 6px 10px;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-family: inherit;
   background: var(--surface);
+  color: var(--text);
+}
+.form-row input:focus, .form-row select:focus {
+  outline: none;
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 3px var(--primary-lt);
 }
 
-/* === Badge === */
+/* === Badge ===
+   Радиус 4px вместо таблетки 999px — бейджи референса прямоугольные.
+   Верхний регистр и кегль оставлены: наши бейджи несут статус, а не метку. */
 .badge {
   display: inline-block;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
+  letter-spacing: 0.3px;
 }
-.badge-expense { background: rgba(220,38,38,0.1); color: var(--danger); }
-.badge-income { background: rgba(22,163,74,0.1); color: var(--success); }
-.badge-info   { background: rgba(59,130,246,0.1); color: #1d4ed8; }
-.badge-warn   { background: rgba(234,179,8,0.18); color: #854d0e; }
-.badge-ok     { background: rgba(22,163,74,0.1); color: var(--success); }
-.badge-error  { background: rgba(220,38,38,0.1); color: var(--danger); }
+.badge-expense { background: var(--red-lt); color: var(--danger); }
+.badge-income { background: var(--green-lt); color: var(--success); }
+.badge-info   { background: var(--blue-lt); color: var(--blue); }
+.badge-warn   { background: var(--yellow-lt); color: #b45309; }
+.badge-ok     { background: var(--green-lt); color: var(--success); }
+.badge-error  { background: var(--red-lt); color: var(--danger); }
 
 /* === Page title (h2 на странице без вложения в .page-toolbar) === */
 .page-title {
@@ -361,12 +641,36 @@ html, body {
   color: var(--muted);
 }
 
-/* === Form grid для двухколоночных форм (правила маппинга) === */
+/* === Form grid для двухколоночных форм (правила маппинга) ===
+   Было `repeat(auto-fit, minmax(200px, 1fr))`: на 1440px это давало ПЯТЬ колонок
+   шириной ~211px, и форма расползалась в одну длинную неровную строку. Комментарий
+   и назначение говорят про две колонки — фиксируем их явно.
+   `minmax(0, 1fr)`, а не `1fr`: иначе колонку раздувает min-content селекта
+   (см. §2.8 про тот же приём в .app). */
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
+@media (max-width: 640px) {
+  .form-grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* Поля сетки — обычные .form-field (вертикальный стек label + контрол).
+   Раньше здесь стоял .filter, но он стилизован ТОЛЬКО как `.filters-bar .filter`,
+   поэтому вне фильтр-бара контролы оставались нативными: border 1px #767676,
+   radius 0, высота 19–21px вместо 36, шрифт 13.33px и ширина по содержимому
+   (в одинаковых колонках получалось 49 / 108 / 144 / 153 / 191px). */
+.form-grid > .form-field { margin-bottom: 0; }   /* расстояние задаёт gap сетки */
+/* Когда .form-field сам является <label> (обёртка вокруг контрола), подпись —
+   это <span>, а не вложенный <label>: даём ему тот же вид. */
+.form-grid > .form-field > span {
+  display: block;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+/* Иначе gap 4px складывался с margin-top подсказки и давал 8px. */
+.form-grid .hint-warn { margin-top: 0; }
 
 /* === Карточка формы правил маппинга === */
 .rule-form {
@@ -413,6 +717,42 @@ html, body {
   color: var(--muted);
   font-size: 13px;
 }
+/* === Табы выбора банка (Альфа / Точка) === */
+.import-bank-tabs {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.bank-tab {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+.bank-tab:hover {
+  background: var(--bg-surface-secondary);
+  color: var(--text);
+}
+.bank-tab.active {
+  background: var(--primary-strong);
+  color: #fff;
+  border-color: var(--primary-strong-dk);
+}
+.bank-tab:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 2px; }
+.bank-tab i {
+  margin-right: 6px;
+}
+/* Подсказка «приглушённый текст» — для «—» в категории transfer-строк. */
+.hint-muted { color: var(--muted); }
 .import-summary {
   display: flex;
   gap: 8px;
@@ -436,23 +776,40 @@ html, body {
 /* === Дубли в превью импорта (операция уже импортирована по externalRef) === */
 .row-dup {
   opacity: 0.55;
-  background: rgba(234,179,8,0.05);
+  background: var(--yellow-lt);
 }
 
 /* === HOLD-операции (неподтверждённые резервы — сумма ещё не списана) === */
 .row-hold {
-  background: rgba(234,179,8,0.08);
+  background: var(--yellow-lt);
 }
 .row-hold:hover {
-  background: rgba(234,179,8,0.14);
+  background: rgba(245,159,0,0.20);
 }
 
 /* === Частично распознанные операции (платежи ГИБДД/СБП/ЖКХ — нет MCC/PAN/merchant) === */
 .row-minimal {
-  background: rgba(148,163,184,0.05);   /* серый, чуть прозрачнее чем row-dup */
+  background: var(--slate-lt);   /* серый, чуть прозрачнее чем row-dup */
 }
 .row-minimal:hover {
-  background: rgba(148,163,184,0.12);
+  background: rgba(148,163,184,0.16);
+}
+
+/* === Transfer-операции (переводы между своими счетами — Точка) ===
+   Синеватый фон чтобы визуально отличать от обычных расходов: это не расход. */
+.row-transfer {
+  background: var(--azure-lt);
+}
+.row-transfer:hover {
+  background: rgba(66,153,225,0.14);
+}
+/* Контекст transfer-строки: номера счетов плательщика/получателя по выписке
+   (помогает понять, что выбрать в 2 select'ах). */
+.transfer-context {
+  font-size: 11px;
+  margin-top: 4px;
+  color: var(--muted);
+  word-break: break-all;
 }
 
 /* === Импорт: более плотная таблица превью === */
@@ -464,7 +821,13 @@ html, body {
 }
 .table.table-import select {
   font-size: 12px;
-  padding: 3px 6px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
   max-width: 100%;
 }
 /* Колонка Merchant / Описание: длинный текст (абонентки Тинькофф,
@@ -475,6 +838,18 @@ html, body {
   white-space: normal;
   line-height: 1.3;
 }
+/* Для transfer-строк 2 select'а в одной ячейке — компактная укладка через gap. */
+.table.table-import td.account-cell {
+  white-space: nowrap;
+}
+.table.table-import td.account-cell select {
+  display: inline-block;
+  vertical-align: middle;
+}
+.table.table-import td.account-cell .fa-arrow-right {
+  margin: 0 4px;
+  color: var(--muted);
+}
 /* Сумма операций: расход красным, доход зелёным (для столбцов .num в таблицах). */
 .num.num-expense { color: var(--danger); }
 .num.num-income { color: var(--success); }
@@ -484,7 +859,7 @@ html, body {
   display: flex;
   width: 100%;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--surface);
 }
@@ -496,6 +871,10 @@ html, body {
 .toggle-label {
   flex: 1;
   text-align: center;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 8px 12px;
   font-size: 14px;
   font-weight: 500;
@@ -511,10 +890,13 @@ html, body {
   color: white;
 }
 .toggle-label:hover {
-  background: rgba(37,99,235,0.06);
+  background: var(--primary-lt);
+}
+.toggle-segment:checked + .toggle-label:hover {
+  background: var(--accent-hover);
 }
 .toggle-segment:focus-visible + .toggle-label {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--primary-strong);
   outline-offset: -2px;
 }
 
@@ -522,23 +904,29 @@ html, body {
 .category-select { position: relative; }
 .category-select-trigger {
   width: 100%;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 0 12px;
   font-size: 14px;
   font-family: inherit;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   cursor: pointer;
   text-align: left;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
-.category-select-trigger:hover { border-color: var(--accent); }
+.category-select-trigger:hover { border-color: var(--primary); }
+.category-select-trigger:focus {
+  outline: none;
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 3px var(--primary-lt);
+}
 .category-select-trigger.is-empty { color: var(--muted); }
-.category-select-trigger:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .category-select-display {
   display: inline-flex;
   align-items: center;
@@ -560,29 +948,33 @@ html, body {
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
   z-index: 50;
 }
 .category-select-dropdown.flip-up {
   top: auto;
   bottom: calc(100% + 2px);
 }
-.category-select-search {
+/* .category-select .category-select-search — чтобы базовое `.form-field input`
+   (класс+тип, специфичнее одного класса) не навязывало поиску полную рамку
+   вместо одной нижней. */
+.category-select .category-select-search {
   display: block;
   width: 100%;
-  padding: 8px 10px;
+  height: 36px;
+  padding: 0 10px;
   font-size: 13px;
   font-family: inherit;
   color: var(--text);
   background: var(--surface);
   border: none;
   border-bottom: 1px solid var(--border);
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   outline: none;
   box-sizing: border-box;
 }
-.category-select-search:focus { border-bottom-color: var(--accent); }
+.category-select-search:focus { border-bottom-color: var(--primary-strong); }
 .category-select-search::placeholder { color: var(--muted); }
 .category-select-option {
   display: flex;
@@ -594,9 +986,9 @@ html, body {
   color: var(--text);
   user-select: none;
 }
-.category-select-option:hover { background: rgba(37,99,235,0.08); color: var(--accent); }
+.category-select-option:hover { background: var(--primary-lt); color: var(--accent); }
 .category-select-option.is-selected {
-  background: rgba(37,99,235,0.12);
+  background: rgba(26,187,156,0.16);
   color: var(--accent);
   font-weight: 500;
 }
@@ -606,7 +998,10 @@ html, body {
 
 /* === Combobox === */
 .combobox { position: relative; width: 100%; }
-.combobox-input {
+/* .form-field .combobox-input (а не просто .combobox-input): базовое правило
+   `.form-field input { padding: 0 12px }` специфичнее классового и иначе
+   съедало бы правый отступ под стрелку. */
+.form-field .combobox-input {
   width: 100%;
   box-sizing: border-box;
   padding-right: 28px;
@@ -620,8 +1015,8 @@ html, body {
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
   z-index: 50;
 }
 .combobox-option {
@@ -634,7 +1029,7 @@ html, body {
 .combobox-option[hidden] { display: none; }
 .combobox-option.active,
 .combobox-option:hover {
-  background: rgba(37,99,235,0.08);
+  background: var(--primary-lt);
   color: var(--accent);
 }
 .combobox-empty {
@@ -680,8 +1075,8 @@ html, body {
 }
 .icon-picker-tab:hover { color: var(--text); }
 .icon-picker-tab.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+  color: var(--primary-strong);
+  border-bottom-color: var(--primary-strong);
 }
 .icon-picker-pane { display: none; }
 .icon-picker-pane.active { display: block; }
@@ -692,15 +1087,15 @@ html, body {
   max-height: 180px;
   overflow-y: auto;
   padding: 4px;
-  background: var(--bg);
-  border-radius: 6px;
+  background: var(--bg-surface-secondary);
+  border-radius: var(--radius);
   border: 1px solid var(--border);
 }
 .icon-picker-btn {
   aspect-ratio: 1;
   border: 1.5px solid transparent;
   background: var(--surface);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   color: var(--muted);
@@ -712,14 +1107,14 @@ html, body {
   line-height: 1;
 }
 .icon-picker-btn:hover {
-  color: var(--accent);
+  color: var(--primary-strong);
   border-color: var(--border);
   transform: scale(1.1);
 }
 .icon-picker-btn.selected {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: rgba(37,99,235,0.08);
+  color: var(--primary-strong);
+  border-color: var(--primary-strong);
+  background: var(--primary-lt);
 }
 .icon-picker-emoji {
   font-size: 18px;
@@ -734,17 +1129,17 @@ html, body {
 .color-swatch {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1.5px solid transparent;
   cursor: pointer;
   padding: 0;
   transition: transform 0.1s, border-color 0.1s;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  box-shadow: var(--shadow);
 }
 .color-swatch:hover { transform: scale(1.12); }
 .color-swatch.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(37,99,235,0.18);
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 2px var(--primary-ring);
 }
 .color-custom { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
 .color-custom input[type="color"] {
@@ -752,21 +1147,24 @@ html, body {
   height: 28px;
   padding: 2px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   background: var(--surface);
 }
-.color-hex {
+/* Селектор с .form-field — иначе базовое `.form-field input` перебивает
+   это правило по специфичности (класс+тип против класса). */
+.form-field .color-hex {
   width: 96px;
-  padding: 5px 10px;
+  height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
   font-size: 13px;
   background: var(--surface);
   color: var(--text);
 }
-.color-hex:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(37,99,235,0.1); }
+.color-hex:focus { outline: none; border-color: var(--primary-strong); box-shadow: 0 0 0 3px var(--primary-lt); }
 .form-field-color { align-items: stretch; }
 
 /* === Modal === */
@@ -783,45 +1181,52 @@ html, body {
 @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
 .modal {
   background: var(--surface);
-  border-radius: 12px;
-  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
   max-width: 480px;
   width: calc(100% - 32px);
-  box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-  animation: slideUp 0.2s ease;
+  box-shadow: var(--shadow-modal);
+  animation: slideUp 0.2s cubic-bezier(0.2, 0, 0, 1);
   max-height: calc(100vh - 32px);
   overflow-y: auto;
 }
-@keyframes slideUp { from { transform: translateY(10px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
-.modal-title { font-size: 18px; font-weight: 600; margin: 0 0 16px; }
+@keyframes slideUp { from { transform: translateY(8px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+.modal-title { font-size: 15px; font-weight: 600; letter-spacing: -0.1px; margin: 0 0 16px; }
+/* Широкая модалка: 520px вместо 480 — на две колонки полей (карты счёта). */
+.modal-wide { max-width: 520px; }
 .form-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.form-field label { font-size: 13px; color: var(--muted); font-weight: 500; }
+.form-field label { font-size: 12px; color: var(--text); font-weight: 500; }
 .form-field input, .form-field select, .form-field textarea {
-  padding: 8px 10px;
+  height: 36px;
+  padding: 0 12px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
   font-family: inherit;
   background: var(--surface);
   color: var(--text);
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
+.form-field select { cursor: pointer; }
 .form-field input:focus, .form-field select:focus, .form-field textarea:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 3px var(--primary-lt);
 }
-.form-field textarea { min-height: 60px; resize: vertical; }
+/* textarea/checkbox не могут нести фиксированную height — снимаем её. */
+.form-field textarea { height: auto; min-height: 90px; padding: 8px 12px; resize: vertical; line-height: 1.5; }
 .form-field input[type="checkbox"] { width: 18px; height: 18px; padding: 0; }
 .modal-form { display: flex; flex-direction: column; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
 .form-error {
   color: var(--danger);
-  font-size: 13px;
+  font-size: 12px;
   margin-bottom: 12px;
   padding: 8px 12px;
-  background: rgba(220,38,38,0.08);
-  border: 1px solid rgba(220,38,38,0.2);
-  border-radius: 6px;
+  background: var(--red-lt);
+  border: 1px solid var(--red-ring);
+  border-radius: var(--radius-sm);
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -866,12 +1271,13 @@ html, body {
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.3px;
 }
 .filters-bar select {
-  padding: 6px 10px;
+  height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   font-size: 13px;
   font-family: inherit;
   background: var(--surface);
@@ -879,8 +1285,8 @@ html, body {
 }
 .filters-bar select:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 3px var(--primary-lt);
 }
 /* Инлайн-вариант: компактная строка фильтров прямо в тулбаре, в одном стиле
    с .page-summary (страница «Операции»). Без карточки — только поля. */
@@ -911,11 +1317,12 @@ html, body {
 }
 .filters-bar--inline input,
 .filters-bar--inline select {
-  padding: 5px 8px;
+  height: 32px;
+  padding: 0 8px;
   font-size: 13px;
   font-family: inherit;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
 }
@@ -924,8 +1331,8 @@ html, body {
 .filters-bar--inline input:focus,
 .filters-bar--inline select:focus {
   outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 3px var(--primary-lt);
 }
 
 /* Контейнер .table-section оборачивает фильтры + таблицу, чтобы можно
@@ -964,10 +1371,19 @@ html, body {
 .page-summary-label { color: var(--muted); }
 .page-summary-value { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 .page-summary-sep { color: var(--muted); opacity: 0.6; }
+/* Обёртка одного показателя («Итого 1 234,00 ₽»): label и value держим одним
+   флекс-элементом, чтобы при переносе строки они не разъезжались по разным.
+   Раньше класс был в разметке, но без стилей (DESIGN.md §5.1). */
+.page-summary-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
 .view-mode-toggle {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--surface);
 }
@@ -975,17 +1391,20 @@ html, body {
   border: none;
   border-radius: 0;
   background: transparent;
+  min-height: 30px;
   padding: 6px 14px;
   font-size: 13px;
-  color: var(--muted);
+  font-family: inherit;
+  color: var(--text-secondary);
   cursor: pointer;
   transition: background 0.1s, color 0.1s;
 }
-.view-mode-toggle .view-mode-btn:hover { background: rgba(0,0,0,0.04); color: var(--text); }
+.view-mode-toggle .view-mode-btn:hover { background: var(--hover); color: var(--text); }
 .view-mode-toggle .view-mode-btn.active {
   background: var(--accent);
   color: white;
 }
+.view-mode-toggle .view-mode-btn.active:hover { background: var(--accent-hover); }
 .view-mode-toggle .view-mode-btn + .view-mode-btn { border-left: 1px solid var(--border); }
 
 /* === Import menu (dropdown на кнопке «Импорт из брокера») === */
@@ -998,7 +1417,7 @@ html, body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  box-shadow: var(--shadow-pop);
   padding: 4px;
   z-index: 50;
 }
@@ -1009,15 +1428,15 @@ html, body {
   background: transparent;
   border: none;
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.1s;
 }
-.import-menu-item:hover { background: rgba(37,99,235,0.08); }
+.import-menu-item:hover { background: var(--primary-lt); }
 /* «Загрузить по всем счетам» — первый пункт меню, отделён от списка счетов. */
 .import-menu-item-all {
   border-bottom: 1px solid var(--border);
-  border-radius: 6px 6px 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
   margin-bottom: 2px;
 }
 .import-menu-item-all .import-menu-item-title { color: var(--accent); font-weight: 600; }
@@ -1030,7 +1449,7 @@ html, body {
   color: var(--muted);
   line-height: 1.5;
 }
-.import-menu-error { color: #dc2626; }
+.import-menu-error { color: var(--danger); }
 
 /* === Account cards (PAN-маски) === */
 .cards-badge {
@@ -1042,9 +1461,9 @@ html, body {
 .cards-list {
   margin-top: 6px;
   padding: 6px 10px;
-  background: var(--bg);
-  border-radius: 6px;
-  font-family: ui-monospace, Menlo, monospace;
+  background: var(--bg-surface-secondary);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--muted);
   display: flex;
@@ -1062,7 +1481,7 @@ html, body {
 .tree-wrap {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
   overflow: auto;
   box-shadow: var(--shadow);
   flex: 1 1 auto;
@@ -1077,13 +1496,13 @@ html, body {
   padding: 8px 12px;
   cursor: pointer;
   user-select: none;
-  background: rgba(0,0,0,0.02);
+  background: var(--hover-soft);
   border-bottom: 1px solid var(--border);
   font-weight: 500;
   font-size: 13px;
   transition: background 0.1s;
 }
-.tree-group-header:hover { background: rgba(37,99,235,0.06); }
+.tree-group-header:hover { background: var(--primary-lt); }
 .tree-group-header .tree-caret {
   font-size: 10px;
   color: var(--muted);
@@ -1151,15 +1570,15 @@ html, body {
 /* Тег-тип категории (Расход/Доход) вместо простого текста. */
 .cat-type {
   display: inline-block;
-  padding: 1px 8px;
-  border-radius: 10px;
-  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  font-size: 10.5px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.3px;
 }
-.cat-type-expense { background: rgba(220, 38, 38, 0.08); color: #dc2626; }
-.cat-type-income  { background: rgba(22, 163, 74, 0.08); color: #16a34a; }
+.cat-type-expense { background: var(--red-lt); color: var(--danger); }
+.cat-type-income  { background: var(--green-lt); color: var(--success); }
 /* Заголовок секции с inline-действиями справа («Категории 16 · Экспорт · + Добавить»). */
 .section-title-row {
   display: flex;
@@ -1172,14 +1591,14 @@ html, body {
 /* Inline-empty для случая «список пуст» внутри секции настроек (без рамки/тени). */
 .empty-inline {
   padding: 16px;
-  background: var(--bg);
+  background: var(--bg-surface-secondary);
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   color: var(--text);
   font-size: 13px;
   line-height: 1.6;
 }
-.empty-inline code { font-size: 12px; padding: 1px 4px; background: var(--surface); border-radius: 3px; }
+.empty-inline code { font-size: 12px; padding: 1px 4px; background: var(--surface); border-radius: var(--radius-sm); }
 
 /* === Mini-dashboard (агрегаты по группам, над таблицей) ===
    Компактный вид: одна строка на группу (брокер/счёт), без «карточных» отступов. */
@@ -1189,7 +1608,7 @@ html, body {
   text-transform: uppercase;
   color: var(--muted);
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.4px;
   margin-bottom: 4px;
 }
 /* Кликабельный заголовок секции дашборда: chevron + название,
@@ -1200,14 +1619,14 @@ html, body {
   gap: 6px;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   margin-left: -6px;
   margin-bottom: 4px;
   user-select: none;
   transition: background 0.1s;
 }
-.dashboard-section-toggle:hover { background: rgba(0,0,0,0.04); color: var(--text); }
-.dashboard-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dashboard-section-toggle:hover { background: var(--hover); color: var(--text); }
+.dashboard-section-toggle:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 1px; }
 .dashboard-section-toggle .fa { font-size: 10px; width: 10px; text-align: center; }
 .dashboard-cards {
   display: grid;
@@ -1222,7 +1641,7 @@ html, body {
   gap: 2px 14px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 10px;
 }
 .dashboard-card-title {
@@ -1247,12 +1666,114 @@ html, body {
   .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 768px) {
-  .app { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), а не 1fr: `1fr` — это minmax(auto, 1fr), и грид-трек
+     не может сжаться ниже min-content широкого ребёнка (таблица, дерево).
+     Вместе с body { overflow-x: hidden } это отрезало правую часть контента
+     без возможности доскроллить: на портфеле .app раздувался до 1520px при
+     вьюпорте 768px. С minmax(0, 1fr) трек держит ширину, а скроллит уже
+     .table-wrap / .tree-wrap внутри (у них overflow: auto). */
+  .app { grid-template-columns: minmax(0, 1fr); }
   .sidebar { display: none; }
-  .topbar { padding: 14px 16px; }
+  .topbar { padding: 0 16px; }
   .view { padding: 16px; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 480px) {
   .cards { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* === Классы, заменившие inline-стили в вьюхах ===
+   Раньше эти свойства писались прямо в разметке (`style="..."`). Вынесены
+   в CSS: цвета и радиусы должны идти через токены, а не дублироваться в JS
+   (AGENTS.md §3/§4). Порядок объявлений сохранён 1:1, поведение не менялось. */
+
+/* CTA внутри .empty («+ Добавить счёт», «Сбросить фильтры»).
+   Раньше margin-top был 16px и 12px в двух местах — сведён к 16px. */
+.empty-actions { margin-top: var(--space-4); }
+
+/* Инпут inline-правки комментария в строке таблицы (transactions.js).
+   Ячейка таблицы, не .form-field, поэтому стили свои и плотные. */
+.comment-input {
+  width: 100%;
+  height: auto;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--text);
+}
+.comment-input:focus {
+  outline: none;
+  border-color: var(--primary-strong);
+  box-shadow: 0 0 0 3px var(--primary-lt);
+}
+
+/* Итоговая строка таблицы («Итого» в accounts.js и simple-list.js).
+   background — токен --hover-soft вместо хардкода rgba(0,0,0,0.02). */
+.table-total-row { font-weight: 600; background: var(--hover-soft); }
+
+/* Отступ у ссылки «К импорту →» внутри .rules-intro (import-rules.js) —
+   вместо inline margin-left. Правило на потомка, а не класс: ссылка там одна. */
+.rules-intro a { margin-left: var(--space-2); }
+
+/* === Модалка «Карты счёта» (accounts.js) ===
+   Пересобрана на openModal({ body }): нужен динамический список карт и
+   собственная форма добавления, чего декларативные поля не умеют. Раньше весь
+   диалог собирался вручную, с ~10 инлайн-стилями. */
+.cards-manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);              /* было 6px инлайном — ближайший шаг шкалы */
+  margin-bottom: var(--space-4);
+}
+.cards-manager-label { font-size: 12px; color: var(--muted); }
+.cards-manager-empty { font-size: 13px; color: var(--muted); margin-bottom: var(--space-3); }
+/* Форма добавления карты: строка из двух полей и кнопки. */
+.cards-add-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: flex-end;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+/* Поля внутри неё тянутся, но не сжимаются ниже 160px, и без нижнего отступа —
+   строка выравнивается по нижнему краю кнопки (было inline flex/min-width/margin). */
+.cards-add-form .form-field { flex: 1 1 160px; margin: 0; }
+.cards-note { font-size: 12px; color: var(--muted); margin-top: var(--space-3); line-height: 1.5; }
+
+/* Приглушённый текст. До этого .muted был определён ТОЛЬКО в составных
+   селекторах (.cards-list-item .muted, .tree-group-header .tree-group-metric .muted),
+   хотя применяется и как самостоятельный класс — там он не давал ничего. */
+.muted { color: var(--muted); }
+
+/* Цветовой маркер счёта (10px круг в accounts.js). Цвет приходит из данных
+   пользователя, поэтому ставится валидированным (api.js → cssColor), а не
+   классом; класс держит геометрию. Раньше здесь был хардкод #999 в fallback. */
+.acc-color-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+/* Строка карты в модалке «Карты счёта» (accounts.js). Вынесена из inline —
+   там был захардкожен border-radius: 6px в обход токена --radius. */
+.card-manager-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* Маска карты: моно-шрифт из токена. Раньше inline-стек
+   ui-monospace,Menlo,monospace дублировал --font-mono. */
+.card-pan { font-family: var(--font-mono); font-size: 14px; }

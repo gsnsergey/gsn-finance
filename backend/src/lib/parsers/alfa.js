@@ -54,7 +54,15 @@ const CODE_RES = [
 // PAN может разрываться pdf-парсером между строками: «220015+++++» + «+4795».
 // Поэтому между группами плюсов допускаем 0+ любых плюсов и пробелов.
 const PAN_RE = /(\d{6})\+[\s\+]*?(\d{4})/
-const AMOUNT_RE = /([+\-−])\s*(\d[\d\s]*)[,\.](\d{2})\s*RUR/g
+
+// Сумма в RUR. Знак ОПЦИОНАЛЕН: Альфа выдаёт расходы с «−» или «-» (явный
+// минус), а поступления — часто БЕЗ знака («15 000,00 RUR»). Если знака нет
+// — это income (поступление). Расходы в Альфе всегда идут с явным «−».
+//
+// Защита от ложных срабатываний: в parseRegularBlock мы дополнительно
+// требуем наличие кода операции в блоке. Итоги/заголовки («Итого по счёту:
+// 12 345,67 RUR») идут обычно без кода и поэтому отбрасываются.
+const AMOUNT_RE = /(?:([+\-−])\s*)?(\d[\d\s]*)[,\.](\d{2})\s*RUR/g
 
 // Регулярка для merchant-строки обычной операции: terminalId\COUNTRY\CITY\MERCHANT MCC\d{4}
 const MERCHANT_RE = /(\d+)\\([A-Z]{2,3})\\([^\\|]+)\\([^\s|][^|]*?)\s+MCC(\d{4})/g
@@ -125,18 +133,21 @@ function parseRegularBlock(block, description) {
   if (!dateMatch) return null
   const [, dd, mm, yyyy] = dateMatch
 
-  // Сумма — обязательна. Без неё блок не считается операцией.
-  const amountMatches = [...block.matchAll(AMOUNT_RE)]
-  if (!amountMatches.length) return null
-  const am = amountMatches[amountMatches.length - 1]
-  const { amount, signedRub } = parseAmountMatch(am)
-
   // ID операции: первый подходящий из CODE_RES. Может быть null (неизвестный формат).
+  // Наличие кода — обязательный признак ОПЕРАЦИИ (vs итогов/заголовков). С ним
+  // AMOUNT_RE без знака не сматчит «Итого по счёту: 12 345,67 RUR» как income.
   let externalRef = null
   for (const re of CODE_RES) {
     const m = block.match(re)
     if (m) { externalRef = m[1]; break }
   }
+  if (!externalRef) return null
+
+  // Сумма — обязательна. Без неё блок не считается операцией.
+  const amountMatches = [...block.matchAll(AMOUNT_RE)]
+  if (!amountMatches.length) return null
+  const am = amountMatches[amountMatches.length - 1]
+  const { amount, signedRub } = parseAmountMatch(am)
 
   // PAN — опционален (платежи через Альфа-систему идут без карты).
   let panMask = null
@@ -238,10 +249,14 @@ function parseHoldBlock(block, description) {
 // Хелпер: AMOUNT_RE → знаковые копейки.
 // =================================================================
 function parseAmountMatch(am) {
+  // am[1] — знак или undefined (если Альфа выдала сумму без знака, т. е. income).
+  // am[2] — рубли. am[3] — копейки (после запятой).
   const signChar = am[1]
   const rubles = Number(am[2].replace(/\s+/g, ''))
   const kopecks = Number(am[3])
-  const sign = (signChar === '-' || signChar === '−') ? -1 : 1
+  // Расходы Альфа всегда сопровождает явным «-» или «−». Поступления часто
+  // идут без знака — трактуем отсутствие как +1.
+  const sign = (signChar === '-' || signChar === '−') ? -1 : +1
   const signedRub = sign * rubles
   const amount = signedRub * 100 + sign * kopecks
   return { amount, signedRub }

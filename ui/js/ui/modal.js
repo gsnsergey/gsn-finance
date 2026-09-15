@@ -1,6 +1,8 @@
 // Простая модалка на базе нативного <dialog>.
 // openModal({ title, fields, submitLabel, onSubmit }) → returns close()
 
+import { escapeHtml, escapeAttr } from '../api.js'
+
 const COLOR_PALETTE = [
   '#1f2937', // slate-800
   '#6b7280', // gray-500
@@ -132,10 +134,6 @@ function normalizeColor(v) {
   return null
 }
 
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
-function escapeAttr(v) { return escapeHtml(v) }
 
 // Парсер числа: поддерживает "1 500", "1,500", "1.5", "1500"
 // Возвращает number или null (если пусто/не число).
@@ -166,28 +164,69 @@ function clearError(form) {
   if (err) err.remove()
 }
 
-export function openModal({ title, fields, submitLabel = 'Сохранить', onSubmit, onMount }) {
+/**
+ * Две формы вызова (совместимы между собой — все новые опции опциональны):
+ *
+ *   openModal({ title, fields, submitLabel, onSubmit, onMount })   — форма из полей
+ *   openModal({ title, body, closeLabel, wide, onMount, onClose }) — своя разметка
+ *
+ * `body(host, dialog, close)` заменяет блок полей. В этом режиме контейнер —
+ * div, а не form, и кнопки submit нет: вьюха приносит собственную форму
+ * (вложенные <form> браузер не поддерживает). `wide` → класс .modal-wide (520px).
+ * `onClose` вызывается после закрытия любым путём (backdrop, Esc, «Отмена»),
+ * чтобы вьюха могла перерисовать себя.
+ */
+export function openModal({
+  title,
+  fields = [],
+  body,
+  submitLabel = 'Сохранить',
+  closeLabel = 'Отмена',
+  onSubmit,
+  onMount,
+  onClose,
+  wide = false,
+}) {
+  const custom = typeof body === 'function'
   const backdrop = document.createElement('div')
   backdrop.className = 'modal-backdrop'
 
   const dialog = document.createElement('div')
-  dialog.className = 'modal'
+  dialog.className = 'modal' + (wide ? ' modal-wide' : '')
   dialog.setAttribute('role', 'dialog')
   dialog.setAttribute('aria-modal', 'true')
 
-  let html = `<h2 class="modal-title">${escapeHtml(title)}</h2><form class="modal-form">`
-  for (const f of fields) html += renderField(f)
-  html += `<div class="modal-actions">
-    <button type="button" class="btn" data-action="cancel">Отмена</button>
-    <button type="submit" class="btn btn-primary">${escapeHtml(submitLabel)}</button>
-  </div></form>`
+  let html = `<h2 class="modal-title">${escapeHtml(title)}</h2>`
+  if (custom) {
+    // Своя разметка: контейнер — div (вьюха приносит собственную форму),
+    // а действия выносим наружу, чтобы перерисовка тела их не затирала.
+    html += `<div class="modal-form" data-modal-body></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" data-action="cancel">${escapeHtml(closeLabel)}</button>
+      </div>`
+  } else {
+    html += `<form class="modal-form">`
+    for (const f of fields) html += renderField(f)
+    html += `<div class="modal-actions">
+      <button type="button" class="btn" data-action="cancel">Отмена</button>
+      <button type="submit" class="btn btn-primary">${escapeHtml(submitLabel)}</button>
+    </div></form>`
+  }
 
   dialog.innerHTML = html
   backdrop.appendChild(dialog)
   document.body.appendChild(backdrop)
 
-  const form = dialog.querySelector('form')
-  const close = () => backdrop.remove()
+  const form = dialog.querySelector('.modal-form')
+  let closed = false
+  const close = () => {
+    if (closed) return
+    closed = true
+    backdrop.remove()
+    if (typeof onClose === 'function') {
+      try { onClose() } catch (e) { console.error('onClose error:', e) }
+    }
+  }
 
   backdrop.addEventListener('click', e => { if (e.target === backdrop) tryClose() })
 
@@ -196,11 +235,16 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
   }
   document.addEventListener('keydown', escHandler)
 
-  form.querySelector('[data-action="cancel"]').addEventListener('click', () => tryClose())
+  dialog.querySelector('[data-action="cancel"]').addEventListener('click', () => tryClose())
 
-  // Кастомная разметка после монтирования (например, пикер иконок)
+  // Кастомная разметка после монтирования (например, пикер иконок).
+  // В режиме body контейнер отдаём вьюхе, затем зовём общий хук onMount.
+  if (custom) {
+    const host = dialog.querySelector('[data-modal-body]')
+    try { body(host, dialog, close) } catch (e) { console.error('modal body error:', e) }
+  }
   if (typeof onMount === 'function') {
-    try { onMount(dialog) } catch (e) { console.error('onMount error:', e) }
+    try { onMount(dialog, close) } catch (e) { console.error('onMount error:', e) }
   }
 
   // Снимок состояния формы сразу после onMount, чтобы корректно отслеживать
@@ -226,7 +270,8 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
   }
 
   setTimeout(() => {
-    const first = form.querySelector('input:not([type=checkbox]), select, textarea')
+    const scope = custom ? dialog : form
+    const first = scope.querySelector('input:not([type=checkbox]), select, textarea')
     if (first) first.focus()
   }, 30)
 
@@ -382,12 +427,17 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
     // Показываем список только когда пользователь начал вводить — не при фокусе.
     // Фокус (например, при автофокусе первой формы) не открывает дропдаун,
     // это раздражает: открываешь форму — а тебе сразу предлагают выбор.
+    // Но и «только по вводу» нельзя: список был недоступен, пока не начнёшь
+    // печатать, а showAll() вообще нигде не вызывался. Открываем по явному
+    // действию пользователя — клик по полю или ArrowDown; автфокус их не даёт.
     input.addEventListener('input', () => { filter(input.value); hidden.value = '' })
+    input.addEventListener('click', () => { if (dropdown.hidden) showAll() })
     input.addEventListener('blur', () => setTimeout(() => { dropdown.hidden = true }, 200))
     input.addEventListener('keydown', e => {
       const visible = options.filter(o => !o.hidden)
       if (e.key === 'ArrowDown') {
         e.preventDefault()
+        if (dropdown.hidden) { showAll(); return }
         activeIdx = Math.min(activeIdx + 1, visible.length - 1)
         updateActive()
       } else if (e.key === 'ArrowUp') {
@@ -398,7 +448,13 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
         e.preventDefault()
         select(visible[activeIdx])
       } else if (e.key === 'Escape') {
-        dropdown.hidden = true
+        // Escape закрывает сначала список, и только следующее нажатие — модалку.
+        // Без stopPropagation документный Esc-обработчик формы закрывал бы её
+        // сразу вместе со списком, и пользователь терял бы введённое.
+        if (!dropdown.hidden) {
+          e.stopPropagation()
+          dropdown.hidden = true
+        }
       }
     })
     options.forEach(opt => {
@@ -409,7 +465,8 @@ export function openModal({ title, fields, submitLabel = 'Сохранить', o
     })
   })
 
-  form.addEventListener('submit', async e => {
+  // В режиме body собственной формы нет — вьюха вешает обработчик сама.
+  if (!custom) form.addEventListener('submit', async e => {
     e.preventDefault()
     clearError(form)
     // Синхронизировать combobox: если пользователь ввёл текст, но не выбрал из списка,

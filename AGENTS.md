@@ -8,7 +8,9 @@
 - **HTML:** один `ui/index.html`. Бандлеров/SSR/SPA-фреймворков нет.
 - **JS:** нативные ES-модули (`<script type="module">`). Импорты — только между `ui/js/**`.
 - **Entry:** `ui/js/app.js`. **Роутер:** `ui/js/router.js` (hash-based: `#/transactions?from=…`).
-- **API:** `ui/js/api.js` (`api.get/post/patch/del`, `rub`, `toast`, `fmtDay`, `todayIso`).
+- **API:** `ui/js/api.js` (`api.get/post/patch/del`, `rub`, `toast`, `fmtDay`, `todayIso`,
+  `escapeHtml`, `escapeAttr`, `cssColor`). Экранирование и валидация цвета — **только отсюда**:
+  локальные копии `escapeHtml` во вьюхах запрещены (были в 7 файлах, вынесены).
 - **Сайдбар:** `ui/js/sidebar.js`. **Модалка:** `ui/js/ui/modal.js` (`openModal({ title, fields, onSubmit })`).
 - **Вьюхи:** `ui/js/views/*.js` экспортируют `async function render(root)`.
 - **Справочники:** `ui/js/data/*.js` — статические массивы.
@@ -24,7 +26,7 @@
 
 **Базовые импорты:**
 ```js
-import { api, rub, toast, todayIso, fmtDay } from '../api.js'
+import { api, rub, toast, todayIso, fmtDay, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { categoryIconHTML } from '../data/categoryIcons.js'
 import { bankLabel, currencyLabel, ... } from '../data/*.js'

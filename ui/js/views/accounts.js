@@ -1,4 +1,4 @@
-import { api, rub, toast, todayIso, fmtDay } from '../api.js'
+import { api, rub, toast, todayIso, fmtDay, cssColor, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 import { BANKS, bankLabel } from '../data/banks.js'
 import { CURRENCIES, currencyLabel } from '../data/currencies.js'
@@ -41,12 +41,12 @@ export async function render(root) {
       </div>
     </div>
     <div class="table-wrap"><table class="table">
-      <thead><tr><th>Название</th><th>Банк</th><th>Тип</th><th>Валюта</th><th class="num">Текущий остаток</th><th style="width:120px"></th></tr></thead>
+      <thead><tr><th>Название</th><th>Банк</th><th>Тип</th><th>Валюта</th><th>Номер счёта</th><th class="num">Текущий остаток</th><th style="width:120px"></th></tr></thead>
       <tbody>
         ${active.map(a => `
           <tr>
             <td>
-              <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${a.color || '#999'};margin-right:8px;vertical-align:middle"></span>${a.name}
+              <span class="acc-color-dot" style="background:${cssColor(a.color)}"></span>${a.name}
               <div style="font-size:11px;color:var(--muted);margin-top:2px">${syncLabel(a)}${a.cards && a.cards.length > 0 ? ` · <a href="#" data-action="cards-toggle" data-id="${a.id}" class="cards-badge" title="Показать карты" aria-expanded="false"><span class="cards-badge-caret">▸</span>🗂 ${a.cards.length} ${a.cards.length === 1 ? 'карта' : a.cards.length < 5 ? 'карты' : 'карт'}</a>` : ` · <a href="#" data-action="cards-manage" data-id="${a.id}" class="cards-badge" style="color:var(--muted)" title="Привязать карты">+ карты</a>`}</div>
               ${a.cards && a.cards.length > 0 ? `<div class="cards-list" data-cards-for="${a.id}" hidden>
                 ${a.cards.map(c => `<div class="cards-list-item">${escapeHtml(c.panMask)}${c.label ? ` <span class="muted">— ${escapeHtml(c.label)}</span>` : ''}</div>`).join('')}
@@ -55,6 +55,11 @@ export async function render(root) {
             <td>${bankLabel(a.bank)}</td>
             <td>${accountTypeLabel(a.type)}</td>
             <td>${currencyLabel(a.currency)}</td>
+            <td>
+              ${a.accountNumber
+                ? `<code style="font-size:11px;color:var(--muted);cursor:help" title="Номер счёта заполнен — импорт выписок Точки будет автоматически сопоставлять операции по этому номеру">${formatAccountNumber(a.accountNumber)}</code>`
+                : `<span style="color:var(--muted);font-size:11px">—</span>`}
+            </td>
             <td class="num">${rub(balanceOf(a))}</td>
             <td>
               <div class="row-actions">
@@ -66,8 +71,8 @@ export async function render(root) {
             </td>
           </tr>
         `).join('')}
-        <tr style="font-weight:600;background:rgba(0,0,0,0.02)">
-          <td colspan="4">Итого</td>
+        <tr class="table-total-row">
+          <td colspan="5">Итого</td>
           <td class="num">${rub(activeTotal)}</td>
           <td></td>
         </tr>
@@ -186,7 +191,7 @@ function openAccountForm(root, account) {
     ? `<div class="form-field">
         <label>Карты</label>
         <div style="font-size:13px;line-height:1.6;color:var(--muted)">
-          ${account.cards.map(c => `<div>${escapeHtml(c.panMask)}${c.label ? ` <span style="color:var(--muted)">— ${escapeHtml(c.label)}</span>` : ''}</div>`).join('')}
+          ${account.cards.map(c => `<div>${escapeHtml(c.panMask)}${c.label ? ` <span class="muted">— ${escapeHtml(c.label)}</span>` : ''}</div>`).join('')}
           <a href="#" id="manage-cards-link" style="display:inline-block;margin-top:6px">Управлять картами</a>
         </div>
       </div>`
@@ -209,6 +214,15 @@ function openAccountForm(root, account) {
         options: ACCOUNT_TYPES
       },
       { name: 'bank', label: 'Банк', type: 'combobox', placeholder: 'начни вводить или выберите', options: BANKS, value: account?.bank },
+      {
+        name: 'accountNumber',
+        label: 'Номер счёта',
+        type: 'text',
+        placeholder: '20 цифр',
+        hint: 'Российский р/с (20 цифр). Используется авто-резолвом при импорте Точки.',
+        value: account?.accountNumber || '',
+        attrs: { inputmode: 'numeric', pattern: '\\d{20}', maxlength: '25' }
+      },
       {
         name: 'balance',
         label: isEdit
@@ -248,12 +262,20 @@ function openAccountForm(root, account) {
           name: data.name, type: data.type, bank: data.bank,
           currency: data.currency, color: data.color
         }
+        // accountNumber: пустое значение трактуем как null (снять номер).
+        // Валидацию формата делает бэкенд.
+        const accNum = (data.accountNumber || '').replace(/\s+/g, '').trim()
+        payload.accountNumber = accNum === '' ? null : accNum
         // Правка зафиксированной суммы = сверка на сегодня; без правки balanceAsOf не трогаем.
         if (newBalance !== originalBalance) payload.balance = newBalance
         await api.patch(`/api/accounts/${account.id}`, payload)
         toast('Счёт обновлён', 'success')
       } else {
-        await api.post('/api/accounts', { ...data, balance: newBalance })
+        const accNum = (data.accountNumber || '').replace(/\s+/g, '').trim()
+        await api.post('/api/accounts', {
+          ...data, balance: newBalance,
+          accountNumber: accNum === '' ? null : accNum
+        })
         toast('Счёт создан', 'success')
       }
       render(root)
@@ -263,104 +285,100 @@ function openAccountForm(root, account) {
 
 // Модалка «Карты счёта»: список существующих + форма добавления новой.
 // Полный PAN не запрашивается — только маска (6 цифр + ≥4 плюсов + 4 цифры).
+// Модалка «Карты счёта». Собрана на openModal с кастомным телом: нужен
+// динамический список карт и собственная форма добавления — декларативные
+// поля openModal этого не умеют. Тело перерисовывается после каждой мутации,
+// сам диалог при этом не пересоздаётся.
 function openCardsForm(root, account) {
-  // Используем кастомный HTML вместо декларативного openModal, т. к. тут
-  // нужны динамический список + форма добавления + inline-удаление.
-  const backdrop = document.createElement('div')
-  backdrop.className = 'modal-backdrop'
-
   const cards = account.cards || []
+  let host = null
 
-  function render() {
-    backdrop.innerHTML = `
-      <div class="modal" style="max-width:520px">
-        <div class="modal-title">Карты счёта «${escapeHtml(account.name)}»</div>
-        <div id="cards-list-area">
-          ${cards.length === 0
-            ? '<div style="color:var(--muted);font-size:13px;margin-bottom:12px">Карты ещё не привязаны.</div>'
-            : `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">
-                ${cards.map(c => `
-                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border);border-radius:6px">
-                    <div>
-                      <div style="font-family:ui-monospace,Menlo,monospace;font-size:14px">${escapeHtml(c.panMask)}</div>
-                      ${c.label ? `<div style="font-size:12px;color:var(--muted)">${escapeHtml(c.label)}</div>` : ''}
-                    </div>
-                    <button class="btn btn-sm btn-danger" data-card-del="${escapeHtml(c.id)}" title="Удалить">×</button>
-                  </div>
-                `).join('')}
-              </div>`}
-          <form id="card-add-form" style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;padding-top:12px;border-top:1px solid var(--border)">
-            <div class="form-field" style="flex:1;min-width:160px;margin:0">
-              <label>Маска PAN</label>
-              <input type="text" name="panMask" placeholder="220015++++++4795" pattern="^\\d{6}\\+{4,}\\d{4}$" required>
-            </div>
-            <div class="form-field" style="flex:1;min-width:120px;margin:0">
-              <label>Метка</label>
-              <input type="text" name="label" placeholder="На продукты" maxlength="64">
-            </div>
-            <button type="submit" class="btn btn-primary">+ Добавить карту</button>
-          </form>
-          <div id="card-form-error" class="form-error" style="display:none"></div>
-          <div style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.5">
-            Хранится только маска (6 цифр + ≥4 плюсов + 4 цифры). Полный PAN не запрашивается и не сохраняется.
-          </div>
+  function draw() {
+    host.innerHTML = `
+      ${cards.length === 0
+        ? '<div class="cards-manager-empty">Карты ещё не привязаны.</div>'
+        : `<div class="cards-manager-list">
+            ${cards.map(c => `
+              <div class="card-manager-row">
+                <div>
+                  <div class="card-pan">${escapeHtml(c.panMask)}</div>
+                  ${c.label ? `<div class="cards-manager-label">${escapeHtml(c.label)}</div>` : ''}
+                </div>
+                <button type="button" class="btn btn-sm btn-danger" data-card-del="${escapeHtml(c.id)}" title="Удалить">×</button>
+              </div>
+            `).join('')}
+          </div>`}
+      <form class="cards-add-form" data-card-form>
+        <div class="form-field">
+          <label>Маска PAN</label>
+          <input type="text" name="panMask" placeholder="220015++++++4795" pattern="^\\d{6}\\+{4,}\\d{4}$" required>
         </div>
-        <div class="modal-actions" style="margin-top:16px">
-          <button class="btn" id="cards-close">Готово</button>
+        <div class="form-field">
+          <label>Метка</label>
+          <input type="text" name="label" placeholder="На продукты" maxlength="64">
         </div>
+        <button type="submit" class="btn btn-primary">+ Добавить карту</button>
+      </form>
+      <div class="form-error" data-card-error hidden></div>
+      <div class="cards-note">
+        Хранится только маска (6 цифр + ≥4 плюсов + 4 цифры). Полный PAN не запрашивается и не сохраняется.
       </div>
     `
+
+    const form = host.querySelector('[data-card-form]')
+    const errEl = host.querySelector('[data-card-error]')
+    const showErr = (msg) => { errEl.textContent = msg; errEl.hidden = false }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const panMask = form.panMask.value.trim()
+      const label = form.label.value.trim() || null
+      errEl.hidden = true
+      if (!/^\d{6}\+{4,}\d{4}$/.test(panMask)) {
+        showErr('Маска должна быть в формате 6 цифр + ≥4 плюсов + 4 цифры (например, 220015++++++4795). Полный PAN не принимается.')
+        return
+      }
+      try {
+        const created = await api.post(`/api/accounts/${account.id}/cards`, { panMask, label })
+        cards.push(created)
+        toast('Карта добавлена', 'success')
+        draw()
+      } catch (e) {
+        showErr(e.message || 'Не удалось добавить карту')
+      }
+    })
+
+    host.querySelectorAll('[data-card-del]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.cardDel
+        if (!confirm('Удалить карту?')) return
+        try {
+          await api.del(`/api/accounts/${account.id}/cards/${id}`)
+          const idx = cards.findIndex(c => c.id === id)
+          if (idx >= 0) cards.splice(idx, 1)
+          toast('Карта удалена', 'success')
+          draw()
+        } catch (e) { toast(e.message, 'error') }
+      })
+    })
   }
 
-  render()
-  document.body.appendChild(backdrop)
-
-  backdrop.addEventListener('click', (e) => {
-    if (e.target === backdrop) { backdrop.remove(); render(root) }
-  })
-  backdrop.querySelector('#cards-close').addEventListener('click', () => {
-    backdrop.remove(); render(root)
-  })
-
-  backdrop.querySelectorAll('[data-card-del]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.cardDel
-      if (!confirm('Удалить карту?')) return
-      try {
-        await api.del(`/api/accounts/${account.id}/cards/${id}`)
-        const idx = cards.findIndex(c => c.id === id)
-        if (idx >= 0) cards.splice(idx, 1)
-        toast('Карта удалена', 'success')
-        render()
-      } catch (e) { toast(e.message, 'error') }
-    })
-  })
-
-  backdrop.querySelector('#card-add-form').addEventListener('submit', async (e) => {
-    e.preventDefault()
-    const form = e.target
-    const panMask = form.panMask.value.trim()
-    const label = form.label.value.trim() || null
-    const errEl = backdrop.querySelector('#card-form-error')
-    errEl.style.display = 'none'
-    if (!/^\d{6}\+{4,}\d{4}$/.test(panMask)) {
-      errEl.textContent = 'Маска должна быть в формате 6 цифр + ≥4 плюсов + 4 цифры (например, 220015++++++4795). Полный PAN не принимается.'
-      errEl.style.display = 'block'
-      return
-    }
-    try {
-      const created = await api.post(`/api/accounts/${account.id}/cards`, { panMask, label })
-      cards.push(created)
-      form.reset()
-      toast('Карта добавлена', 'success')
-      render()
-    } catch (e) {
-      errEl.textContent = e.message || 'Не удалось добавить карту'
-      errEl.style.display = 'block'
-    }
+  openModal({
+    title: `Карты счёта «${account.name}»`,
+    wide: true,
+    closeLabel: 'Готово',
+    body: (bodyHost) => { host = bodyHost; draw() },
+    // Диалог перерисовывался вручную и обновлял страницу только по «Готово»;
+    // теперь refresh висит на onClose и срабатывает при любом способе закрытия.
+    onClose: () => render(root),
   })
 }
 
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+
+// 20-значный номер счёта → «40802 81090 1500 0113 741» для удобства чтения.
+// Бэкенд хранит без пробелов; UI показывает с разбивкой по 5 цифр.
+function formatAccountNumber(num) {
+  const s = String(num || '').replace(/\s+/g, '')
+  if (!/^\d{20}$/.test(s)) return escapeHtml(num)
+  return escapeHtml(s.match(/.{1,5}/g).join(' '))
 }

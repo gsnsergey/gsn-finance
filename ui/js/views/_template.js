@@ -19,15 +19,9 @@
 // Эталон:  ui/js/views/transactions.js
 // =============================================================================
 
-import { api, rub, toast, todayIso } from '../api.js'
+import { api, rub, toast, todayIso, escapeHtml } from '../api.js'
 import { openModal } from '../ui/modal.js'
 
-// Локальный escapeHtml — только для этого шаблона. Если встречается в 3+
-// вьюхах — вынеси в api.js (см. AGENTS.md §4.4 «анти-паттерны»).
-function escapeHtml(v) {
-  return String(v ?? '').replace(/[&<>"']/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
 
 // =============================================================================
 // Главная вьюха

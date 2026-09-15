@@ -5,7 +5,7 @@ import db from '../db.js'
 export const TABLE_CONFIGS = {
   accounts: {
     table: 'accounts',
-    fields: ['name', 'bank', 'type', 'currency', 'balance', 'balanceAsOf', 'color', 'archived'],
+    fields: ['name', 'bank', 'type', 'currency', 'balance', 'balanceAsOf', 'color', 'archived', 'accountNumber'],
     required: ['name', 'type'],
     enums: { type: ['debit', 'credit', 'card', 'savings'] },
     booleanFields: ['archived'],

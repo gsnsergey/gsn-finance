@@ -11,14 +11,8 @@
 //   merchantId      — terminalId операции (крайне редко; для исключений)
 //   descriptionRegex — RegExp по полной строке операции (для нетривиальных случаев)
 
-import { api, toast } from '../api.js'
+import { api, toast, escapeHtml } from '../api.js'
 
-function escapeHtml(v) {
-  if (v === null || v === undefined) return ''
-  return String(v).replace(/[&<>"']/g, ch => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  })[ch])
-}
 
 const MATCH_LABELS = {
   mcc: 'MCC',
@@ -53,13 +47,13 @@ export async function render(root) {
         Правила определяют, в какую категорию попадают операции, импортированные
         из банковских выписок. Сначала применяются правила с меньшим
         <code>priority</code>. Счёт-специфичные правила перебивают глобальные.
-        <a href="#/import" style="margin-left:8px">К импорту →</a>
+        <a href="#/import">К импорту →</a>
       </div>
 
       <div class="rule-form">
         <h3>Новое правило</h3>
         <div class="form-grid">
-          <label class="filter"><span>Тип совпадения</span>
+          <label class="form-field"><span>Тип совпадения</span>
             <select id="rule-type">
               <option value="mcc">MCC</option>
               <option value="merchantName">Merchant</option>
@@ -67,11 +61,11 @@ export async function render(root) {
               <option value="descriptionRegex">Regex по описанию</option>
             </select>
           </label>
-          <label class="filter"><span>Значение</span>
+          <label class="form-field"><span>Значение</span>
             <input type="text" id="rule-value" placeholder="5411">
             <small id="rule-hint" class="hint-warn"></small>
           </label>
-          <label class="filter"><span>Категория</span>
+          <label class="form-field"><span>Категория</span>
             <select id="rule-category">
               <option value="">— выбрать —</option>
               ${categories.filter(c => !c.archived).map(c =>
@@ -79,7 +73,7 @@ export async function render(root) {
               ).join('')}
             </select>
           </label>
-          <label class="filter"><span>Счёт</span>
+          <label class="form-field"><span>Счёт</span>
             <select id="rule-account">
               <option value="">Все счета (глобальное)</option>
               ${accounts.filter(a => !a.archived).map(a =>
@@ -87,7 +81,7 @@ export async function render(root) {
               ).join('')}
             </select>
           </label>
-          <label class="filter"><span>Priority</span>
+          <label class="form-field"><span>Priority</span>
             <input type="number" id="rule-priority" value="100" min="1" max="999">
             <small class="hint-warn">Меньше = выше приоритет</small>
           </label>
