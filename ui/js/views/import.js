@@ -18,7 +18,9 @@
 // появляется чекбокс «Сохранить как правило для MCC …» — правило создаётся
 // POST /api/import-rules перед записью операций (если отмечено).
 
-import { api, rub, toast, escapeHtml } from '../api.js'
+import { api, rub, toast, escapeHtml, escapeAttr } from '../api.js'
+import { openModal } from '../ui/modal.js'
+import { categoryIconHTML } from '../data/categoryIcons.js'
 
 
 // POST бинарного/текстового файла (PDF/CSV выписки) на preview.
@@ -52,10 +54,12 @@ export async function render(root) {
     accounts: [],
     categories: [],
     file: null,
+    fileName: '',            // имя файла — только для подписи после восстановления (File не переживает F5)
     preview: null,           // { operations, totals } от preview-эндпоинта
     // Локальные правки пользователя: rowId -> { accountId, transferAccountId, categoryId, saveAsRule }
     edits: new Map(),
-    loading: false
+    loading: false,
+    imported: false         // успешный импорт уже прошёл — превью больше не сохраняем
   }
 
   // Загружаем справочники (для select'ов счёта и категории) заранее.
@@ -99,6 +103,68 @@ export async function render(root) {
     }
   }
 
+  // Превью импорта переживает F5 (и уход на другую страницу с возвратом):
+  // сериализуем разобранную выписку + все правки пользователя в sessionStorage.
+  // Именно sessionStorage, а не localStorage: данные актуальны для текущей
+  // вкладки и не должны «всплывать» через неделю.
+  // Ключ версионирован: v2 — добавлены данные дублей из БД (existing*) и
+  // rawSource. Старое превью из v1 невалидно (там этих полей нет), поэтому
+  // читаем только v2 — иначе дубли снова выглядели бы незаполненными.
+  const PERSIST_KEY = 'finans.import.preview.v2'
+  let persistTimer = null
+
+  function persistStateNow() {
+    if (!state.preview || state.imported) return
+    try {
+      sessionStorage.setItem(PERSIST_KEY, JSON.stringify({
+        bankSource: state.bankSource,
+        fileName: state.fileName || '',
+        preview: state.preview,
+        edits: [...state.edits],
+        checked: [...state.checked]
+      }))
+    } catch (e) {
+      // Приватный режим / квота — не критично: просто не переживёт обновление.
+      console.warn('не удалось сохранить превью импорта в sessionStorage', e)
+    }
+  }
+
+  // Дебаунс: правки идут пачками («выбрать все», смена категории), а превью
+  // на 300+ операций незачем сериализовать на каждое нажатие.
+  function schedulePersist() {
+    clearTimeout(persistTimer)
+    persistTimer = setTimeout(persistStateNow, 300)
+  }
+
+  function restorePersistedState() {
+    let raw = null
+    try { raw = sessionStorage.getItem(PERSIST_KEY) } catch { raw = null }
+    if (!raw) return false
+    try {
+      const data = JSON.parse(raw)
+      const ops = data?.preview?.operations
+      if (!Array.isArray(ops) || ops.length === 0) {
+        clearPersistedState()
+        return false
+      }
+      state.bankSource = data.bankSource === 'tochka' ? 'tochka' : 'alfa'
+      state.fileName = data.fileName || ''
+      state.preview = data.preview
+      state.edits = new Map((data.edits || []).map(([k, v]) => [Number(k), v]))
+      state.checked = new Map((data.checked || []).map(([k, v]) => [Number(k), v]))
+      return true
+    } catch (e) {
+      console.warn('не удалось восстановить превью импорта', e)
+      clearPersistedState()
+      return false
+    }
+  }
+
+  function clearPersistedState() {
+    clearTimeout(persistTimer)
+    try { sessionStorage.removeItem(PERSIST_KEY) } catch { /* ignore */ }
+  }
+
   function renderShell() {
     const cfg = BANK_CONFIG[state.bankSource]
     root.innerHTML = `
@@ -127,7 +193,7 @@ export async function render(root) {
         <span id="import-filename" class="import-filename"></span>
       </div>
       <div id="import-summary"></div>
-      <div id="import-table"></div>
+      <div id="import-table" class="import-table"></div>
     `
     // Табы переключают банк: меняется accept у input, интро и endpoint.
     // При смене банка сбрасываем preview — это разные операции и даже разные
@@ -138,8 +204,10 @@ export async function render(root) {
         if (next === state.bankSource) return
         state.bankSource = next
         state.preview = null
+        state.fileName = ''
         state.edits.clear()
         state.checked = new Map()
+        clearPersistedState()
         document.getElementById('import-filename').textContent = ''
         document.getElementById('import-summary').innerHTML = ''
         document.getElementById('import-table').innerHTML = ''
@@ -155,23 +223,91 @@ export async function render(root) {
     })
   }
 
-  // Опции для select'ов счёта/категории. Подняты на уровень render(), чтобы
-  // updateCategoryCell() мог их переиспользовать без перерисовки всей таблицы.
-  const accountOpts = id => `<option value="">— выбрать —</option>` +
-    state.accounts.map(a => `<option value="${escapeHtml(a.id)}"${id === a.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('')
-  const categoryOpts = id => `<option value="">— без категории —</option>` +
-    state.categories.map(c => `<option value="${escapeHtml(c.id)}"${id === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('')
+  // Единый inline-выбор в ячейке (счёт или категория): кнопка + всплывающий
+  // список с поиском по подстроке. Нативный <select> искать не умеет, а списки
+  // длинные; у категорий ещё и имена повторяются у расходов/доходов («Прочее»),
+  // поэтому выбор всегда идёт по id, а не по тексту.
+  function pickOptions(field) {
+    if (field === 'categoryId') {
+      return [
+        { value: '', label: '— без категории —', html: '— без категории —' },
+        ...state.categories.map(c => ({
+          value: c.id,
+          label: c.name,
+          html: `${categoryIconHTML(c.icon)} ${escapeHtml(c.name)}`
+        }))
+      ]
+    }
+    return [
+      { value: '', label: '— выбрать —', html: '— выбрать —' },
+      ...state.accounts.map(a => ({ value: a.id, label: a.name, html: escapeHtml(a.name) }))
+    ]
+  }
+
+  function pickButtonHTML(idx, field, value, disabled) {
+    const isCategory = field === 'categoryId'
+    const found = pickOptions(field).find(o => String(o.value) === String(value || ''))
+    const emptyText = isCategory ? '— без категории —' : '— выбрать —'
+    let title = (found && found.value ? found.label : (isCategory ? 'Категория не выбрана' : 'Счёт не выбран')) +
+      ' — нажмите, чтобы выбрать (с поиском)'
+    if (isCategory) {
+      // Категория банка из выписки — в подсказке: видно, откуда взялась
+      // подставленная категория (и почему она такая).
+      const bank = state.preview?.operations[idx]?.bankCategory
+      if (bank) title += `\nКатегория банка в выписке: «${bank}»`
+    }
+    return `<button type="button" class="inline-pick${value ? '' : ' is-empty'}"`
+      + ` data-idx="${idx}" data-field="${field}" ${disabled ? 'disabled' : ''}`
+      + ` title="${escapeAttr(title)}">`
+      + `<span class="inline-pick-name">${found && found.value ? found.html : emptyText}</span>`
+      + `<i class="fa fa-caret-down inline-pick-caret" aria-hidden="true"></i>`
+      + '</button>'
+  }
+
+  function bindPick(btn) {
+    if (!btn || btn.disabled) return
+    btn.addEventListener('click', e => {
+      e.stopPropagation()
+      const idx = Number(btn.dataset.idx)
+      const field = btn.dataset.field
+      // Повторный клик по той же кнопке закрывает список (toggle).
+      if (pickPopover && pickPopover.dataset.idx === String(idx) && pickPopover.dataset.field === field) {
+        closePickPopover()
+        return
+      }
+      openPickPopover(idx, btn, field)
+    })
+  }
+  // Вид операции (transactions.type). Парсер берёт его из колонки `type`
+  // выписки (Списание/Пополнение), но у брокерских и банковских операций
+  // бывают спорные случаи — даём исправить руками. transfer переключает строку
+  // на два счёта (источник → получатель).
+  const TYPE_OPTIONS = [
+    ['expense', 'Расход (−)'],
+    ['income', 'Доход (+)'],
+    ['transfer', 'Перевод (⇄)']
+  ]
+  const typeOpts = id => TYPE_OPTIONS
+    .map(([v, label]) => `<option value="${v}"${id === v ? ' selected' : ''}>${label}</option>`).join('')
+  // Тип показан иконкой у суммы (колонки «Вид» нет), редактор открывается
+  // кликом по иконке — см. обработчик .type-toggle в renderTable().
+  const TYPE_ICON = { expense: 'fa-arrow-down', income: 'fa-arrow-up', transfer: 'fa-exchange' }
+  const TYPE_LABEL = { expense: 'Расход', income: 'Доход', transfer: 'Перевод' }
 
   async function handleFile(file) {
     const cfg = BANK_CONFIG[state.bankSource]
     const transport = cfg.resolve(file)
     state.file = file
+    state.fileName = file.name
     document.getElementById('import-filename').textContent = file.name + ` (${(file.size / 1024).toFixed(1)} KB)`
     document.getElementById('import-summary').innerHTML = ''
     document.getElementById('import-table').innerHTML = `<div class="loading">${escapeHtml(transport.processingLabel)}</div>`
     state.preview = null
+    state.imported = false
     state.edits.clear()
     state.checked = new Map()    // явно проставленные галочки пользователем
+    // Старое превью заменяем — не должно всплыть после F5, если разбор упадёт.
+    clearPersistedState()
 
     try {
       const preview = await postFile(transport.endpoint, file, transport.contentType)
@@ -180,6 +316,9 @@ export async function render(root) {
       preview.operations.forEach((op, i) => state.checked.set(i, !op.alreadyImported))
       renderSummary()
       renderTable()
+      // Пишем сразу, не ждём дебаунса: пользователь может обновить страницу
+      // сразу после загрузки файла.
+      persistStateNow()
     } catch (e) {
       toast('Не удалось разобрать файл: ' + e.message, 'error')
       document.getElementById('import-table').innerHTML = `<div class="empty"><div class="empty-title">Не удалось разобрать файл</div>${escapeHtml(e.message)}</div>`
@@ -210,6 +349,241 @@ export async function render(root) {
     state.edits.set(rowIdx, { ...cur, ...patch })
   }
 
+  // Значение поля строки «по умолчанию» — без правок пользователя. Дубли берут
+  // то, что реально лежит в БД. Одна логика для рендера, импорта и bulk-правок.
+  function baseValue(op, field) {
+    const dup = op.alreadyImported
+    switch (field) {
+      case 'accountId': return op.resolvedAccountId || (dup ? op.existingAccountId : '') || ''
+      case 'transferAccountId': return op.transferAccountId || (dup ? op.existingTransferAccountId : '') || ''
+      case 'categoryId': return op.suggestedCategoryId || (dup ? op.existingCategoryId : '') || ''
+      case 'type': return (dup && op.existingType) ? op.existingType : op.type
+      default: return ''
+    }
+  }
+
+  const FIELD_LABEL = {
+    accountId: 'Счёт',
+    transferAccountId: 'Счёт-получатель',
+    categoryId: 'Категория',
+    type: 'Вид'
+  }
+
+  // Ключ merchant для группировки: регистр, кавычки и хвостовые номера/годы не
+  // мешают («Комиссия за Альфа-Смарт 2025» ≈ «Комиссия за Альфа-Смарт (12)»).
+  function merchantKey(name) {
+    return String(name || '')
+      .toLowerCase()
+      .replace(/[«»"'`]/g, '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s*[№#]?\s*\d[\d\s./-]*$/, '')
+      .trim()
+  }
+
+  // Признак «однотипности» строк: для счёта важнее карта, затем merchant;
+  // для категории/вида — сначала MCC, затем merchant, в последнюю очередь
+  // категория банка (когда ни MCC, ни merchant нет). Нет признака — нет и
+  // предложения (лучше ничего не менять, чем изменить не то).
+  function similarGroup(op, field) {
+    const merchant = (op.merchantName || '').trim()
+    const mKey = merchantKey(merchant)
+    const isAccount = field === 'accountId' || field === 'transferAccountId'
+    if (isAccount && op.panMask) return { key: `pan:${op.panMask}`, label: `карта ${op.panMask}` }
+    if (!isAccount && op.mcc) return { key: `mcc:${op.mcc}`, label: `MCC ${op.mcc}` }
+    if (mKey) return { key: `merchant:${mKey}`, label: `«${merchant}»` }
+    if (!isAccount && op.bankCategory) {
+      return { key: `bankcat:${String(op.bankCategory).toLowerCase()}`, label: `категория банка «${op.bankCategory}»` }
+    }
+    return null
+  }
+
+  function valueLabel(field, value) {
+    if (field === 'categoryId') return (state.categories.find(c => c.id === value) || {}).name || '—'
+    if (field === 'accountId' || field === 'transferAccountId') return (state.accounts.find(a => a.id === value) || {}).name || '—'
+    if (field === 'type') return TYPE_LABEL[value] || value
+    return String(value)
+  }
+
+  // После правки в строке idx ищем строки, куда ту же правку логично применить:
+  //   1) «похожие» — тот же merchant/MCC/карта (см. similarGroup);
+  //   2) «пустые» — строки без категории / без счёта: частая ситуация «много
+  //      банковских комиссий с разными названиями, категории нигде нет».
+  // Молча ничего не меняем: спрашиваем в модальном окне (showBulkModal).
+  function offerBulkApply(idx, field, value) {
+    const ops = state.preview?.operations || []
+    const src = ops[idx]
+    if (!src || !value) return
+    const group = similarGroup(src, field)
+    const idxs = []
+    const emptyIdxs = []
+    for (let i = 0; i < ops.length; i++) {
+      if (i === idx) continue
+      // Дубли уже в БД и только для чтения — их не трогаем. Остальные строки
+      // (в т.ч. снятые галочки) включаем: категория/счёт — свойство данных,
+      // а не факт импорта.
+      if (ops[i].alreadyImported) continue
+      // Поле применимо не к каждой строке: у перевода категории нет по смыслу
+      // (при импорте всё равно уйдёт null), а счёт-получатель есть только у
+      // перевода. Иначе переводы попадали в «строк без категории» и раздували
+      // счётчик (показывало 20 при одной реально пустой строке).
+      const rowType = getEdited(i, 'type', baseValue(ops[i], 'type'))
+      if (field === 'categoryId' && rowType === 'transfer') continue
+      if (field === 'transferAccountId' && rowType !== 'transfer') continue
+      const cur = String(getEdited(i, field, baseValue(ops[i], field)))
+      if (!cur) emptyIdxs.push(i)
+      if (!group || cur === String(value)) continue
+      const g = similarGroup(ops[i], field)
+      if (g && g.key === group.key) idxs.push(i)
+    }
+    if (idxs.length || emptyIdxs.length) {
+      showBulkModal({ field, value, idxs, emptyIdxs, label: group ? group.label : null })
+    }
+  }
+
+  // Модалка «применить это же значение к другим строкам?». Раньше это была
+  // плашка внизу таблицы — при длинном списке она оставалась за кадром, поэтому
+  // спрашиваем окном. Использует штатный openModal в режиме своей разметки.
+  let bulkModalOpen = false
+  function showBulkModal(b) {
+    if (bulkModalOpen) return
+    bulkModalOpen = true
+    const valueTxt = `${FIELD_LABEL[b.field]}: ${valueLabel(b.field, b.value)}`
+    const emptyLabel = b.field === 'accountId' ? 'без счёта'
+      : b.field === 'categoryId' ? 'без категории'
+      : null
+    const choices = []
+    if (b.idxs.length) {
+      choices.push({
+        list: b.idxs,
+        text: `Похожим операциям${b.label ? ` (${b.label})` : ''}`
+      })
+    }
+    if (emptyLabel && b.emptyIdxs.length) {
+      choices.push({ list: b.emptyIdxs, text: `Всем строкам ${emptyLabel}` })
+    }
+
+    openModal({
+      title: 'Применить и к другим строкам?',
+      closeLabel: 'Только эта',
+      wide: true,
+      onClose: () => {
+        // Позицию скролла не трогаем: закрытие «Только эта» вообще не должно
+        // перерисовывать таблицу. Перерисовка — только после применения.
+        bulkModalOpen = false
+      },
+      body: (host, dialog, close) => {
+        host.innerHTML = `
+          <p class="modal-text">Применить «<b>${escapeHtml(valueTxt)}</b>»:</p>
+          <ul class="modal-choice-list">
+            ${choices.map((c, i) => `
+              <li>
+                <button type="button" class="btn btn-primary" data-choice="${i}">
+                  ${escapeHtml(c.text)} (${c.list.length})
+                </button>
+              </li>
+            `).join('')}
+          </ul>
+        `
+        host.querySelectorAll('[data-choice]').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const c = choices[Number(btn.dataset.choice)]
+            for (const i of c.list) setEdited(i, { [b.field]: b.value })
+            close()
+            // renderTable() сам вернёт прокрутку на прежнее место.
+            renderTable()
+          })
+        })
+        const first = host.querySelector('[data-choice]')
+        if (first) first.focus()
+      }
+    })
+  }
+
+  // Обязательные поля отмеченной к импорту строки:
+  //   - счёт-источник — всегда;
+  //   - категория — для income/expense (у перевода категории нет по логике);
+  //   - счёт-получатель — для перевода.
+  // Возвращает список { idx, missing[] } по отмеченным строкам.
+  function findInvalidRows() {
+    const ops = state.preview?.operations || []
+    const invalid = []
+    for (let i = 0; i < ops.length; i++) {
+      const cb = document.querySelector(`.row-check[data-idx="${i}"]`)
+      if (!cb || !cb.checked) continue
+      const type = getEdited(i, 'type', baseValue(ops[i], 'type'))
+      const missing = []
+      if (!getEdited(i, 'accountId', baseValue(ops[i], 'accountId'))) missing.push('account')
+      if (type === 'transfer') {
+        if (!getEdited(i, 'transferAccountId', baseValue(ops[i], 'transferAccountId'))) missing.push('transferAccount')
+      } else if (!getEdited(i, 'categoryId', baseValue(ops[i], 'categoryId'))) {
+        missing.push('category')
+      }
+      if (missing.length) invalid.push({ idx: i, missing })
+    }
+    return invalid
+  }
+
+  // Подсветка невалидных строк + блокировка кнопки импорта. Вызывается после
+  // любой правки/отметки, чтобы «Импортировать» нельзя было нажать, пока у всех
+  // отмеченных строк не заполнены счёт (и категория для доход/расход).
+  function refreshImportState() {
+    const invalid = findInvalidRows()
+    const invalidIdx = new Set(invalid.map(r => r.idx))
+    document.querySelectorAll('#import-table tr[data-idx]').forEach(tr => {
+      tr.classList.toggle('row-invalid', invalidIdx.has(Number(tr.dataset.idx)))
+    })
+    const btn = document.getElementById('import-confirm')
+    if (btn) {
+      btn.disabled = invalid.length > 0
+      btn.title = invalid.length ? 'Заполните счёт и категорию в подсвеченных строках' : ''
+    }
+    const summary = document.getElementById('import-actions-summary')
+    if (summary) {
+      // Номера строк — кнопки: по клику прокручиваем к строке и подсвечиваем
+      // (в длинной выписке иначе приходится искать вручную).
+      summary.innerHTML = invalid.length
+        ? 'Заполните данные: строки ' +
+          invalid.map(r => `<button type="button" class="row-jump" data-idx="${r.idx}">${r.idx + 1}</button>`).join(', ')
+        : ''
+      summary.classList.toggle('import-actions-error', invalid.length > 0)
+    }
+    schedulePersist()
+    return invalid
+  }
+
+  // Позиция скролла превью. renderTable() перерисовывает разметку целиком
+  // (например, после закрытия модалки bulk-правки), из-за чего список прыгал
+  // в начало — сохраняем и возвращаем прокрутку.
+  function captureScroll() {
+    const wrap = document.querySelector('#import-table .table-wrap')
+    const view = document.getElementById('view')
+    return {
+      wrapTop: wrap ? wrap.scrollTop : 0,
+      wrapLeft: wrap ? wrap.scrollLeft : 0,
+      viewTop: view ? view.scrollTop : 0
+    }
+  }
+
+  function restoreScroll(prev) {
+    const wrap = document.querySelector('#import-table .table-wrap')
+    if (wrap) {
+      wrap.scrollTop = prev.wrapTop
+      wrap.scrollLeft = prev.wrapLeft
+    }
+    const view = document.getElementById('view')
+    if (view) view.scrollTop = prev.viewTop
+  }
+
+  // Переход к строке по клику на её номер в сообщении «Заполните данные: …»:
+  // центрируем строку в скролл-контейнере и коротко подсвечиваем.
+  function jumpToRow(idx) {
+    const row = document.querySelector(`#import-table tr[data-idx="${idx}"]`)
+    if (!row) return
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    row.classList.add('row-flash')
+    setTimeout(() => row.classList.remove('row-flash'), 1200)
+  }
+
   function renderTable() {
     const ops = state.preview?.operations || []
     const el = document.getElementById('import-table')
@@ -221,6 +595,10 @@ export async function render(root) {
       </div>`
       return
     }
+
+    const prevScroll = captureScroll()
+    // Перерисовка убивает кнопку-якорь — открытый список категорий закрываем.
+    closePickPopover()
 
     el.innerHTML = `
       <div class="table-wrap">
@@ -239,11 +617,14 @@ export async function render(root) {
           </thead>
           <tbody>
             ${ops.map((op, i) => {
-              const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
-              const transferAccountId = getEdited(i, 'transferAccountId', op.transferAccountId || '')
-              const categoryId = getEdited(i, 'categoryId', op.suggestedCategoryId || '')
               const isDup = op.alreadyImported
-              const isTransfer = op.type === 'transfer'
+              // Для уже импортированных строк показываем то, что реально лежит
+              // в БД (счёт/категория/вид), иначе дубль выглядел «незаполненным».
+              const accountId = getEdited(i, 'accountId', baseValue(op, 'accountId'))
+              const transferAccountId = getEdited(i, 'transferAccountId', baseValue(op, 'transferAccountId'))
+              const categoryId = getEdited(i, 'categoryId', baseValue(op, 'categoryId'))
+              const type = getEdited(i, 'type', baseValue(op, 'type'))
+              const isTransfer = type === 'transfer'
               // HOLD-операции (неподтверждённые резервы) подсвечиваем жёлтым.
               // Это второй класс наравне с .row-dup (уже импортировано).
               const isHold = op.confirmed === false
@@ -262,38 +643,58 @@ export async function render(root) {
                 : isTransfer
                   ? `<span class="badge badge-info" title="Перевод собственных средств между счетами — нужны счёт-источник и счёт-получатель">перевод</span>`
                   : isMinimal
-                    ? `<span class="badge badge-warn" title="Платёж через систему банка (штраф, СБП, ЖКХ) — нет карточных данных">платёж</span>`
+                    ? `<span class="badge badge-warn" title="Нет карточных данных (маска/MCC) — распознано частично; вид операции проверьте в колонке «Вид»">без карты</span>`
                     : ''
+              // Для дубля показываем только метку «уже в БД»: детали разбора
+              // (HOLD/перевод/без карты) для него уже неактуальны.
+              const dateBadge = isDup
+                ? '<span class="badge badge-warn" title="Операция уже есть в базе — повторно не импортируется. Счёт и категория показаны из БД.">уже в БД</span>'
+                : holdBadge
               const saveAsRule = getEdited(i, 'saveAsRule', false)
               // Для «Сохранить как правило»: MCC или merchantName (хотя бы что-то для матча).
               const saveMcc = op.mcc
               const saveMerchant = op.merchantName
 
-              // Колонка «Счёт»: для transfer — 2 select'а (источник и получатель),
-              // иначе — 1 select. Для transfer категория не нужна (показываем прочерк).
+              // Колонка «Счёт»: для transfer — 2 выбора (источник и получатель)
+              // ДРУГ НАД ДРУГОМ с подписями; иначе — 1.
+              // Для transfer категория не нужна (показываем прочерк).
               const accountCell = isTransfer ? `
-                <select class="row-account-source" data-idx="${i}">${accountOpts(accountId)}</select>
-                <i class="fa fa-arrow-right" title="→"></i>
-                <select class="row-account-target" data-idx="${i}">${accountOpts(transferAccountId)}</select>
-                <div class="transfer-context" title="Счёт плательщика и счёт получателя по выписке">
-                  <span class="hint-muted">${escapeHtml((op.payerAccount || '') + ' → ' + (op.payeeAccount || ''))}</span>
-                  ${(op.resolvedAccountId && op.transferAccountId)
-                    ? '<span class="badge badge-ok" style="margin-left:4px" title="Счета определены автоматически по номерам из выписки">✓ авто</span>'
-                    : '<span class="hint-warn" style="margin-left:4px">нет привязки</span>'}
+                <div class="transfer-accounts">
+                  <div class="transfer-account-row">
+                    <span class="transfer-account-label">Списание</span>
+                    ${pickButtonHTML(i, 'accountId', accountId, isDup)}
+                  </div>
+                  <div class="transfer-account-row">
+                    <span class="transfer-account-label">Зачисление</span>
+                    ${pickButtonHTML(i, 'transferAccountId', transferAccountId, isDup)}
+                  </div>
+                  <div class="transfer-context" title="Счёт плательщика и счёт получателя по выписке">
+                    <span class="hint-muted">${escapeHtml((op.payerAccount || '') + ' → ' + (op.payeeAccount || ''))}</span>
+                    ${(op.resolvedAccountId && op.transferAccountId)
+                      ? '<span class="badge badge-ok" style="margin-left:4px" title="Счета определены автоматически по номерам из выписки">✓ авто</span>'
+                      : (isDup && op.existingAccountId && op.existingTransferAccountId)
+                        ? '<span class="badge badge-info" style="margin-left:4px" title="Счета уже сохранённого перевода">в БД</span>'
+                        : '<span class="hint-warn" style="margin-left:4px">нет привязки</span>'}
+                  </div>
                 </div>
               ` : `
-                <select class="row-account" data-idx="${i}">${accountOpts(accountId)}</select>
+                ${pickButtonHTML(i, 'accountId', accountId, isDup)}
                 ${op.resolvedAccountId
                   ? '<span class="badge badge-ok" style="margin-left:4px" title="Счёт определён автоматически по номеру из выписки">✓ авто</span>'
-                  : '<span class="hint-warn" style="margin-left:4px">нет привязки</span>'}
+                  : isDup && op.existingAccountId
+                    ? '<span class="badge badge-info" style="margin-left:4px" title="Счёт из уже сохранённой операции">в БД</span>'
+                    : '<span class="hint-warn" style="margin-left:4px">нет привязки</span>'}
               `
-              // Категория — для transfer не показываем select, только прочерк (там
+              // Категория — для transfer не показываем выбор, только прочерк (там
               // нет категорий по логике перемещения средств между своими счетами).
+              // Выбор — кнопкой и всплывающим списком с поиском
+              // (см. openPickPopover).
               const categoryCell = isTransfer ? `<span class="hint-muted">—</span>` : `
-                <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
+                ${pickButtonHTML(i, 'categoryId', categoryId, isDup)}
                 ${(() => {
                   const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
-                  const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
+                  // Для дублей правило не предлагаем: строка всё равно не импортируется.
+                  const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested && !isDup)
                   return showSave ? `
                     <label class="hint-warn save-rule">
                       <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
@@ -306,14 +707,30 @@ export async function render(root) {
               return `
                 <tr class="${rowClass}" data-idx="${i}">
                   <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : (state.checked.get(i) !== false ? 'checked' : '')} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
-                  <td>${escapeHtml(op.date)}${holdBadge ? ' ' + holdBadge : ''}</td>
+                  <td>${escapeHtml(op.date)}${dateBadge ? ' ' + dateBadge : ''}</td>
                   <td><code>${escapeHtml(op.mcc || '—')}</code></td>
-                  <td class="merchant-cell">${escapeHtml(op.merchantName || op.description || '—')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
+                  <td class="merchant-cell">${escapeHtml(op.merchantName || op.description || '—')}${ruleBadge ? ' ' + ruleBadge : ''}${op.rawSource ? `
+                    <button type="button" class="raw-toggle" data-raw-for="${i}"
+                            title="Показать исходные данные строки из файла">
+                      <i class="fa fa-file-text-o"></i>
+                    </button>` : ''}</td>
                   <td><code>${escapeHtml(op.panMask || '—')}</code></td>
                   <td class="account-cell">${accountCell}</td>
                   <td class="category-cell">${categoryCell}</td>
-                  <td class="num num-${op.type}">${op.type === 'income' ? '+' : ''}${rub(op.type === 'expense' ? -op.amount : op.amount)}</td>
+                  <td class="num num-${type} amount-cell">
+                    <span class="amount-value">${type === 'income' ? '+' : ''}${rub(type === 'expense' ? -op.amount : op.amount)}</span>
+                    <button type="button" class="type-toggle" data-idx="${i}" ${isDup ? 'disabled' : ''}
+                            title="${isDup ? 'Операция уже в базе — только просмотр' : `Вид операции: ${TYPE_LABEL[type]}. Нажмите, чтобы изменить`}">
+                      <i class="fa ${TYPE_ICON[type]}"></i>
+                    </button>
+                    <select class="row-type" data-idx="${i}" hidden ${isDup ? 'disabled' : ''}>${typeOpts(type)}</select>
+                  </td>
                 </tr>
+                ${op.rawSource ? `
+                  <tr class="row-raw" data-raw-row="${i}" hidden>
+                    <td colspan="8"><pre class="raw-source">${escapeHtml(op.rawSource)}</pre></td>
+                  </tr>
+                ` : ''}
               `
             }).join('')}
           </tbody>
@@ -336,77 +753,91 @@ export async function render(root) {
         state.checked.set(Number(cb.dataset.idx), checked)
       })
     }
-    document.getElementById('import-check-all').addEventListener('click', () => setAllCheckboxes(true))
-    document.getElementById('import-uncheck-all').addEventListener('click', () => setAllCheckboxes(false))
+    document.getElementById('import-check-all').addEventListener('click', () => { setAllCheckboxes(true); refreshImportState() })
+    document.getElementById('import-uncheck-all').addEventListener('click', () => { setAllCheckboxes(false); refreshImportState() })
 
     // События строк превью.
     el.querySelectorAll('.row-check').forEach(cb => {
       cb.addEventListener('change', e => {
         state.checked.set(Number(e.target.dataset.idx), e.target.checked)
+        refreshImportState()
       })
     })
-    // Счёт — обычный (1 select)
-    el.querySelectorAll('.row-account').forEach(sel => {
-      sel.addEventListener('change', e => {
-        setEdited(Number(e.target.dataset.idx), { accountId: e.target.value })
-      })
-    })
-    // Счёт для transfer (2 select'а: source и target)
-    el.querySelectorAll('.row-account-source').forEach(sel => {
-      sel.addEventListener('change', e => {
-        setEdited(Number(e.target.dataset.idx), { accountId: e.target.value })
-      })
-    })
-    el.querySelectorAll('.row-account-target').forEach(sel => {
-      sel.addEventListener('change', e => {
-        setEdited(Number(e.target.dataset.idx), { transferAccountId: e.target.value })
-      })
-    })
-    el.querySelectorAll('.row-category').forEach(sel => {
-      sel.addEventListener('change', e => {
-        const idx = Number(e.target.dataset.idx)
-        const newCat = e.target.value
-        const op = state.preview.operations[idx]
-        // Автоматически предлагаем создать правило, если пользователь выбрал
-        // категорию, отличную от предложенной парсером — и есть MCC/merchant
-        // для матча. Чекбокс всё ещё можно снять руками (не обязательно).
-        const matchesSuggested = newCat === (op.suggestedCategoryId || '')
-        const hasMatchKey = !!(op.mcc || op.merchantName)
-        if (newCat && !matchesSuggested && hasMatchKey) {
-          setEdited(idx, { categoryId: newCat, saveAsRule: true })
-        } else {
-          setEdited(idx, { categoryId: newCat })
-        }
-        // Точечное обновление: только ячейка категории (показать/скрыть
-        // чекбокс «сохранить как правило»). НЕ перерисовываем всю таблицу —
-        // иначе сбросятся все галочки .row-check, выбранные пользователем.
-        updateCategoryCell(idx)
-      })
-    })
+    // Счёт и категория: кнопка открывает всплывающий список с поиском
+    // (у перевода — две кнопки: источник и получатель).
+    el.querySelectorAll('.inline-pick').forEach(bindPick)
     el.querySelectorAll('.row-save-rule').forEach(cb => {
       cb.addEventListener('change', e => {
         setEdited(Number(e.target.dataset.idx), { saveAsRule: e.target.checked })
       })
     })
+    // Кнопка «исходные данные из файла»: раскрывает строку с исходным текстом
+    // операции (CSV-строка или блок PDF) — чтобы сверить разбор с выпиской.
+    el.querySelectorAll('.raw-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rawRow = el.querySelector(`tr.row-raw[data-raw-row="${btn.dataset.rawFor}"]`)
+        if (!rawRow) return
+        rawRow.hidden = !rawRow.hidden
+        btn.classList.toggle('active', !rawRow.hidden)
+      })
+    })
+    // Иконка вида операции: клик раскрывает select в той же ячейке.
+    // Выбор в select применяет тип и перерисовывает таблицу (select снова скрыт).
+    el.querySelectorAll('.type-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sel = btn.closest('.amount-cell')?.querySelector('.row-type')
+        if (!sel) return
+        sel.hidden = !sel.hidden
+        if (!sel.hidden) sel.focus()
+      })
+    })
+    // Вид операции. Смена expense/income ↔ transfer меняет структуру строки
+    // (transfer → два счёта и без категории), поэтому перерисовываем таблицу
+    // целиком; state.checked/state.edits сохраняют выбор пользователя.
+    el.querySelectorAll('.row-type').forEach(sel => {
+      sel.addEventListener('change', e => {
+        const idx = Number(e.target.dataset.idx)
+        setEdited(idx, { type: e.target.value })
+        offerBulkApply(idx, 'type', e.target.value)
+        renderTable()
+      })
+    })
     document.getElementById('import-confirm').addEventListener('click', doImport)
+    // Номера строк в сообщении «Заполните данные: …» — переход к строке.
+    // Панель действий пересоздаётся вместе с таблицей, так что слушатель
+    // навешивается заново и не дублируется.
+    const summaryEl = document.getElementById('import-actions-summary')
+    if (summaryEl) {
+      summaryEl.addEventListener('click', e => {
+        const jump = e.target.closest('.row-jump')
+        if (jump) jumpToRow(Number(jump.dataset.idx))
+      })
+    }
+    refreshImportState()
+    restoreScroll(prevScroll)
   }
 
-  // Точечный апдейт ячейки категории: перерисовать select + при необходимости
-  // добавить/убрать блок «сохранить как правило». Не трогает остальные строки.
+  // Точечный апдейт ячейки категории: перерисовать кнопку выбора + при
+  // необходимости добавить/убрать блок «сохранить как правило».
+  // Не трогает остальные строки.
   function updateCategoryCell(idx) {
-    const row = el.querySelector(`tr[data-idx="${idx}"]`)
+    // ВАЖНО: el здесь недоступен (в renderTable он локальный) — берём таблицу
+    // заново, иначе функция падала с ReferenceError и правка категории не
+    // дорисовывалась (в т.ч. не снималась подсветка .row-invalid).
+    const table = document.getElementById('import-table')
+    const row = table ? table.querySelector(`tr[data-idx="${idx}"]`) : null
     if (!row) return
     const cell = row.querySelector('.category-cell')
     if (!cell) return
     const op = state.preview.operations[idx]
-    const categoryId = getEdited(idx, 'categoryId', op.suggestedCategoryId || '')
+    const categoryId = getEdited(idx, 'categoryId', baseValue(op, 'categoryId'))
     const saveAsRule = getEdited(idx, 'saveAsRule', false)
     const saveMcc = op.mcc
     const saveMerchant = op.merchantName
     const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
-    const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
+    const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested && !op.alreadyImported)
     cell.innerHTML = `
-      <select class="row-category" data-idx="${idx}">${categoryOpts(categoryId)}</select>
+      ${pickButtonHTML(idx, 'categoryId', categoryId, op.alreadyImported)}
       ${showSave ? `
         <label class="hint-warn save-rule">
           <input type="checkbox" class="row-save-rule" data-idx="${idx}" ${saveAsRule ? 'checked' : ''}>
@@ -415,27 +846,156 @@ export async function render(root) {
       ` : ''}
     `
     // Перенавешиваем обработчики на новые элементы ячейки.
-    cell.querySelector('.row-category').addEventListener('change', e => {
-      const newCat = e.target.value
-      const m = newCat === (op.suggestedCategoryId || '')
-      const k = !!(op.mcc || op.merchantName)
-      if (newCat && !m && k) setEdited(idx, { categoryId: newCat, saveAsRule: true })
-      else setEdited(idx, { categoryId: newCat })
-      updateCategoryCell(idx)
-    })
+    bindPick(cell.querySelector('.inline-pick'))
     const sr = cell.querySelector('.row-save-rule')
     if (sr) sr.addEventListener('change', e => setEdited(idx, { saveAsRule: e.target.checked }))
+    refreshImportState()
+  }
+
+  // Всплывающий список категорий с поиском по подстроке прямо у строки.
+  // Отдельная модалка избыточна: список не должен уезжать от строки.
+  // Панель кладём в document.body с position: fixed — иначе её обрежет
+  // overflow: auto у .table-wrap.
+  let pickPopover = null
+
+  function onPickPopoverOutside(e) {
+    if (!pickPopover) return
+    if (pickPopover.contains(e.target)) return
+    // Клик по кнопке выбора обрабатывает её собственный обработчик (toggle).
+    if (e.target.closest && e.target.closest('.inline-pick')) return
+    closePickPopover()
+  }
+  function onPickPopoverEsc(e) {
+    if (e.key === 'Escape') closePickPopover()
+  }
+  // Прокрутка закрывает список только если она ВНЕ его: прокрутка самого
+  // списка категорий (или найденного в нём) — обычное действие пользователя.
+  // Иначе панель схлопывалась сразу, как только её пытались листать.
+  function onPickPopoverScroll(e) {
+    if (!pickPopover) return
+    if (e.target === pickPopover || pickPopover.contains(e.target)) return
+    closePickPopover()
+  }
+  function closePickPopover() {
+    if (!pickPopover) return
+    pickPopover.remove()
+    pickPopover = null
+    document.removeEventListener('mousedown', onPickPopoverOutside, true)
+    document.removeEventListener('keydown', onPickPopoverEsc, true)
+    window.removeEventListener('resize', closePickPopover)
+    window.removeEventListener('scroll', onPickPopoverScroll, true)
+    window.removeEventListener('hashchange', closePickPopover)
+  }
+
+  function openPickPopover(idx, btn, field) {
+    closePickPopover()
+    const op = state.preview?.operations[idx]
+    if (!op) return
+    const current = String(getEdited(idx, field, baseValue(op, field)) || '')
+    const options = pickOptions(field)
+
+    const pop = document.createElement('div')
+    // Класс category-select — чтобы поиск получил стиль из ui/modal.js-разметки.
+    pop.className = 'category-select inline-pick-popover'
+    pop.dataset.idx = String(idx)
+    pop.dataset.field = field
+    pop.innerHTML = `
+      <input type="text" class="category-select-search" placeholder="Поиск…" autocomplete="off">
+      <div class="inline-pick-list">
+        ${options.map(o => `
+          <div class="category-select-option${String(o.value) === String(current) ? ' is-selected' : ''}"
+               data-value="${escapeAttr(o.value)}" data-search="${escapeAttr(o.label)}">${o.html}</div>
+        `).join('')}
+        <div class="inline-pick-empty" hidden>Ничего не найдено</div>
+      </div>
+    `
+    document.body.appendChild(pop)
+
+    // Позиция: под кнопкой, с прижатием к вьюпорту; если снизу мало места —
+    // открываем вверх от кнопки.
+    const r = btn.getBoundingClientRect()
+    const width = Math.max(240, Math.min(320, window.innerWidth - 16))
+    pop.style.width = width + 'px'
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + 'px'
+    const spaceBelow = window.innerHeight - r.bottom
+    if (spaceBelow < 280 && r.top > spaceBelow) {
+      pop.style.bottom = (window.innerHeight - r.top + 2) + 'px'
+    } else {
+      pop.style.top = (r.bottom + 2) + 'px'
+    }
+    pickPopover = pop
+
+    const search = pop.querySelector('.category-select-search')
+    const items = Array.from(pop.querySelectorAll('.category-select-option'))
+    search.addEventListener('input', () => {
+      const q = search.value.toLowerCase().trim()
+      let visible = 0
+      items.forEach(el => {
+        const label = (el.dataset.search || '').toLowerCase()
+        const show = !q || label.includes(q)
+        el.style.display = show ? '' : 'none'
+        if (show) visible++
+      })
+      pop.querySelector('.inline-pick-empty').hidden = visible > 0
+    })
+    items.forEach(el => {
+      el.addEventListener('click', () => {
+        const value = el.dataset.value
+        closePickPopover()
+        applyPick(idx, field, value)
+      })
+    })
+    search.focus()
+
+    document.addEventListener('mousedown', onPickPopoverOutside, true)
+    document.addEventListener('keydown', onPickPopoverEsc, true)
+    window.addEventListener('resize', closePickPopover)
+    window.addEventListener('scroll', onPickPopoverScroll, true)
+    // Переход на другую страницу: панель живёт в body, а не во вьюхе.
+    window.addEventListener('hashchange', closePickPopover)
+  }
+
+  // Применяет выбранное значение (счёт или категорию) и предлагает применить
+  // то же к похожим строкам.
+  function applyPick(idx, field, value) {
+    const op = state.preview?.operations[idx]
+    if (!op) return
+    if (field === 'categoryId') {
+      // Автоматически предлагаем создать правило, если выбранная категория
+      // отличается от предложенной парсером и есть MCC/merchant для матча.
+      // Чекбокс всё ещё можно снять руками (не обязательно).
+      const matchesSuggested = value === (op.suggestedCategoryId || '')
+      const hasMatchKey = !!(op.mcc || op.merchantName)
+      if (value && !matchesSuggested && hasMatchKey) {
+        setEdited(idx, { categoryId: value, saveAsRule: true })
+      } else {
+        setEdited(idx, { categoryId: value })
+      }
+      updateCategoryCell(idx)
+    } else {
+      setEdited(idx, { [field]: value })
+      refreshImportState()
+    }
+    offerBulkApply(idx, field, value)
   }
 
   async function doImport() {
     const ops = state.preview?.operations || []
+    // Кнопка disabled при невалидных строках, но подстрахуемся и здесь
+    // (Enter, программный клик, гонка после правки).
+    const invalid = refreshImportState()
+    if (invalid.length) {
+      toast(`Заполните счёт и категорию: строки ${invalid.map(r => r.idx + 1).join(', ')}`, 'error')
+      return
+    }
     const items = []
     for (let i = 0; i < ops.length; i++) {
       const op = ops[i]
       const checked = document.querySelector(`.row-check[data-idx="${i}"]`)?.checked
       if (!checked) continue
-      const isTransfer = op.type === 'transfer'
-      const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
+      const type = getEdited(i, 'type', baseValue(op, 'type'))
+      const isTransfer = type === 'transfer'
+      const accountId = getEdited(i, 'accountId', baseValue(op, 'accountId'))
       if (!accountId) {
         toast(`Строка ${i + 1}: выберите счёт-источник`, 'error')
         return
@@ -444,18 +1004,18 @@ export async function render(root) {
       // Бэкенд сам проверит, что source != target.
       let transferAccountId = null
       if (isTransfer) {
-        transferAccountId = getEdited(i, 'transferAccountId', '')
+        transferAccountId = getEdited(i, 'transferAccountId', baseValue(op, 'transferAccountId'))
         if (!transferAccountId) {
           toast(`Строка ${i + 1} (перевод): выберите счёт-получатель`, 'error')
           return
         }
       }
-      const categoryId = isTransfer ? null : (getEdited(i, 'categoryId', op.suggestedCategoryId || '') || null)
+      const categoryId = isTransfer ? null : (getEdited(i, 'categoryId', baseValue(op, 'categoryId')) || null)
       const item = {
         externalRef: op.externalRef,
         accountId,
         date: op.date,
-        type: op.type,
+        type,
         amount: Math.abs(op.amount),  // знак восстановит backend
         currency: op.currency,
         categoryId,
@@ -518,6 +1078,9 @@ export async function render(root) {
       const result = await api.post('/api/transactions/import', { operations: items })
       toast(`Готово: создано ${result.created}, уже было ${result.skipped}, ошибок ${result.errors.length}`, 'success')
       renderResultBlock(result)
+      // Операции записаны — восстановленное превью больше не нужно.
+      state.imported = true
+      clearPersistedState()
       // Прячем кнопку, чтобы случайно не нажать повторно.
       btn.style.display = 'none'
     } catch (e) {
@@ -544,5 +1107,13 @@ export async function render(root) {
     `
   }
 
+  // Восстанавливаем разобранную выписку после F5: state.bankSource нужен ДО
+  // renderShell (активный таб и интро), превью — после (нужны элементы таблицы).
+  const restored = restorePersistedState()
   renderShell()
+  if (restored) {
+    document.getElementById('import-filename').textContent = state.fileName
+    renderSummary()
+    renderTable()
+  }
 }

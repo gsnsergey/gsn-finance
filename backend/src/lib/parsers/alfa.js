@@ -196,6 +196,9 @@ function parseRegularBlock(block, description) {
     amount,
     currency: 'RUR',
     description,
+    // Исходный текст блока из PDF (строки через « | ») — UI показывает его
+    // по кнопке, чтобы можно было сверить разбор с выпиской.
+    rawSource: description,
     type: signedRub < 0 ? 'expense' : 'income',
     confirmed: true,
     recognitionLevel
@@ -239,6 +242,7 @@ function parseHoldBlock(block, description) {
     amount,
     currency: 'RUR',
     description,
+    rawSource: description,
     type: signedRub < 0 ? 'expense' : 'income',
     confirmed: false,
     recognitionLevel: 'partial'  // HOLD всегда без MCC

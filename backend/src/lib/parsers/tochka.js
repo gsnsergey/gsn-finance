@@ -134,13 +134,13 @@ export function parseTochkaStatement(text) {
   const ops = []
   for (let rowIdx = 1; rowIdx < lines.length; rowIdx++) {
     const cells = lines[rowIdx].split(';')
-    const op = parseRow(cells, ix, rowIdx)
+    const op = parseRow(cells, ix, rowIdx, lines[rowIdx])
     if (op) ops.push(op)
   }
   return ops
 }
 
-function parseRow(cells, ix, rowIdx) {
+function parseRow(cells, ix, rowIdx, rawLine) {
   const get = key => (cells[ix[key]] || '').trim()
 
   // Дата — обязательна. Если нет — пропускаем строку (шапка, футер, мусор).
@@ -263,7 +263,9 @@ function parseRow(cells, ix, rowIdx) {
     payeeBik: get('payeeBik') || null,
     docNumber: docNumber || null,
     purposeKind: genre,
-    qrId: purposeData?.qrId || null
+    qrId: purposeData?.qrId || null,
+    // Исходная строка CSV (как в файле) — UI показывает её по кнопке.
+    rawSource: rawLine || null
   }
 }
 

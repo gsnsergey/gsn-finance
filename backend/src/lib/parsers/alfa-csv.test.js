@@ -182,3 +182,13 @@ test('валюта берётся из колонки (RUR по умолчани
   const ops = parseAlfaCsvStatement(FIXTURE)
   for (const op of ops) assert.equal(op.currency, 'RUR')
 })
+
+test('rawSource сохраняет исходную строку CSV (кнопка «исходные данные»)', () => {
+  const ops = parseAlfaCsvStatement(FIXTURE)
+  const card = ops.find(o => o.mcc === '5411' && o.panMask === '220015++++++4795')
+  assert.ok(card.rawSource.startsWith('14.09.2026,'), 'строка начинается с даты операции')
+  assert.ok(card.rawSource.includes('Krasnodar/MAGNIT DOSTAVKA_YM'))
+  // Квотированное поле с запятой внутри не рвёт исходную строку.
+  const comma = ops.find(o => o.merchantName === 'МТС')
+  assert.ok(comma.rawSource.includes('"Связь, интернет и ТВ"'))
+})

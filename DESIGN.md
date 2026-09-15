@@ -224,7 +224,7 @@ npm-пакета `gentelella@4.0.1`.
 |----------------------|---------|------------------------------------------|
 | Контент              | `auto`  | Карточки, таблицы                        |
 | Sticky thead         | `1`     | `.table th`                              |
-| Dropdown-меню        | `50`    | `.category-select-dropdown`, `.import-menu-dropdown` |
+| Dropdown-меню        | `50`    | `.category-select-dropdown`, `.import-menu-dropdown`, `.inline-pick-popover` |
 | Toast                | `100`   | `#toast`                                 |
 | Modal backdrop       | `200`   | `.modal-backdrop`                        |
 
@@ -494,6 +494,15 @@ openModal({ title, body, closeLabel, wide, onMount, onClose })
 
 `.category-select` (с FA-иконками), `.combobox` (поиск+выбор), `.import-menu` (кнопка+меню).
 Все: `position: absolute; z-index: 50`, закрытие по клику вне / Escape.
+
+Отдельный случай — `.inline-pick` + `.inline-pick-popover` (превью импорта выписки):
+кнопка в ячейке таблицы открывает всплывающий список с поиском по подстроке.
+Один компонент на счёт и на категорию (`data-field`), у перевода — две кнопки
+(источник/получатель).
+Панель кладётся в `document.body` с `position: fixed` (позиция считается в JS от
+кнопки) — иначе её обрезал бы `overflow: auto` у `.table-wrap`. Закрытие: клик вне,
+Escape, повторный клик по кнопке, скролл/resize/смена hash.
+Список и поиск — те же классы `.category-select-*`, что в модалке.
 
 ### 3.11. Pickers
 

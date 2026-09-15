@@ -440,6 +440,19 @@ a.btn:hover { text-decoration: none; }
   flex: 1 1 auto;
   min-height: 0;
 }
+/* Контейнер превью импорта — флекс-колонка на всю оставшуюся высоту .view.
+   Это обязательное условие работы «прилипающей» шапки (.table th,
+   position: sticky): sticky считается от БЛИЖАЙШЕГО скролл-контейнера.
+   Раньше ближайшим был .table-wrap, но с height: auto он не скроллился сам —
+   скроллился .view, и шапка уезжала вместе с таблицей. */
+.import-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  /* Не даём флексу сплющить таблицу на низком окне: ниже этого — скроллится
+     уже .view (обычный случай: места достаточно, скроллится .table-wrap). */
+  min-height: 240px;
+}
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -765,6 +778,48 @@ a.btn { text-decoration: none; }
   align-items: center;
   margin: 16px 0;
 }
+/* Подсказка в панели действий: в каких строках не хватает счёта/категории
+   (импорт заблокирован). Красный — тот же --danger, что у .row-invalid. */
+.import-actions-error {
+  color: var(--danger);
+  font-size: 13px;
+}
+/* Номера строк в подсказке «Заполните данные: …» — кликабельные: переход к
+   строке в таблице (import.js#jumpToRow). Наследуют цвет родителя. */
+.row-jump {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.row-jump:hover { opacity: 0.75; }
+.row-jump:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 1px; }
+/* Короткая подсветка строки, к которой перешли из подсказки. Фон + рамка:
+   одно подсвечивает и валидные, и красные (.row-invalid) строки. */
+.table.table-import tr.row-flash td {
+  background: var(--primary-lt);
+  box-shadow: inset 0 0 0 2px var(--primary-strong);
+}
+/* === Предложение применить правку к другим строкам (модалка импорта) ===
+   Своя разметка внутри openModal: текст + кнопки-варианты на всю ширину.
+   Раньше это была плашка внизу таблицы — при длинном списке она была за кадром. */
+.modal-text {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+.modal-choice-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.modal-choice-list .btn { width: 100%; }
 .save-rule {
   display: block;
   margin-top: 4px;
@@ -803,6 +858,18 @@ a.btn { text-decoration: none; }
 .row-transfer:hover {
   background: rgba(66,153,225,0.14);
 }
+
+/* === Строка превью с незаполненным обязательным полем (счёт/категория) ===
+   Импорт таких строк заблокирован: кнопка «Импортировать выбранные» выключена,
+   пока у всех отмеченных строк нет счёта (и категории для доход/расход). */
+.row-invalid {
+  background: var(--red-lt);
+}
+/* Маркер слева: на border-collapse:collapse box-shadow у <tr> не рисуется,
+   поэтому красим первую ячейку. */
+.row-invalid td:first-child {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
 /* Контекст transfer-строки: номера счетов плательщика/получателя по выписке
    (помогает понять, что выбрать в 2 select'ах). */
 .transfer-context {
@@ -819,6 +886,11 @@ a.btn { text-decoration: none; }
   font-size: 12px;
   vertical-align: middle;
 }
+/* У прилипающей шапки border-collapse: collapse «теряет» нижнюю границу —
+   дублируем её тенью, иначе шапка визуально сливается со строками. */
+.table.table-import th {
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 .table.table-import select {
   font-size: 12px;
   height: 26px;
@@ -830,6 +902,33 @@ a.btn { text-decoration: none; }
   font-family: inherit;
   max-width: 100%;
 }
+/* Кнопка inline-выбора в превью импорта (счёт/категория): внешне как select,
+   но открывает всплывающий список с поиском (нативный select искать не умеет). */
+.table.table-import .inline-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.table.table-import .inline-pick:hover { border-color: var(--primary-strong); }
+.table.table-import .inline-pick:disabled { cursor: default; opacity: 0.85; }
+.table.table-import .inline-pick .inline-pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table.table-import .inline-pick.is-empty { color: var(--muted); }
+.table.table-import .inline-pick-caret { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
 /* Колонка Merchant / Описание: длинный текст (абонентки Тинькофф,
    штрафы ГИБДД) переносится, не обрезается. */
 .table.table-import td.merchant-cell {
@@ -838,7 +937,8 @@ a.btn { text-decoration: none; }
   white-space: normal;
   line-height: 1.3;
 }
-/* Для transfer-строк 2 select'а в одной ячейке — компактная укладка через gap. */
+/* Для transfer-строк два счёта показываем ДРУГ НАД ДРУГОМ с подписями
+   (Списание / Зачисление) — в ячейке таблицы так читается лучше, чем в строку. */
 .table.table-import td.account-cell {
   white-space: nowrap;
 }
@@ -846,13 +946,84 @@ a.btn { text-decoration: none; }
   display: inline-block;
   vertical-align: middle;
 }
-.table.table-import td.account-cell .fa-arrow-right {
-  margin: 0 4px;
+.table.table-import .transfer-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.table.table-import .transfer-account-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.table.table-import .transfer-account-label {
+  flex: 0 0 auto;
+  width: 72px;
   color: var(--muted);
+  font-size: 11px;
+}
+.table.table-import .transfer-account-row select,
+.table.table-import .transfer-account-row .inline-pick {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* Сумма операций: расход красным, доход зелёным (для столбцов .num в таблицах). */
 .num.num-expense { color: var(--danger); }
 .num.num-income { color: var(--success); }
+
+/* === Вид операции в превью импорта ===
+   Отдельной колонки нет: тип показан иконкой у суммы (цвет наследуется от
+   .num-expense/.num-income), редактор раскрывается кликом по иконке. */
+.type-toggle {
+  border: 0;
+  background: none;
+  padding: 0 0 0 4px;
+  margin: 0;
+  color: inherit;          /* красный для расхода, зелёный для дохода */
+  cursor: pointer;
+  font-size: inherit;      /* кнопки не наследуют шрифт ячейки по умолчанию */
+  vertical-align: middle;
+  opacity: 0.7;
+}
+.type-toggle:hover { opacity: 1; }
+/* Дубли (уже в БД) не редактируются — иконка вида только для чтения. */
+.type-toggle:disabled { cursor: default; opacity: 0.85; }
+.table.table-import .row-type {
+  display: block;
+  margin: 4px 0 0 auto;    /* под суммой, по правому краю (.num → text-align:right) */
+}
+.table.table-import .row-type[hidden] { display: none; }
+
+/* === Исходные данные строки выписки (кнопка у merchant) ===
+   Отдельная <tr> под строкой: исходная CSV-строка или блок текста из PDF. */
+.raw-toggle {
+  border: 0;
+  background: none;
+  padding: 0 0 0 6px;
+  margin: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: inherit;
+  vertical-align: middle;
+}
+.raw-toggle:hover,
+.raw-toggle.active { color: var(--primary-strong); }
+.table.table-import tr.row-raw > td {
+  background: var(--slate-lt);
+  padding: 0;
+}
+.raw-source {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  max-height: 220px;
+  overflow: auto;
+}
+
 
 /* === Toggle (сегментированный переключатель) === */
 .toggle-group {
@@ -1777,3 +1948,35 @@ a.btn { text-decoration: none; }
 /* Маска карты: моно-шрифт из токена. Раньше inline-стек
    ui-monospace,Menlo,monospace дублировал --font-mono. */
 .card-pan { font-family: var(--font-mono); font-size: 14px; }
+
+/* === Всплывающий список категорий в превью импорта (inline, с поиском) ===
+   Кладётся в document.body с position: fixed, чтобы не обрезался
+   overflow: auto у .table-wrap; позицию считает JS от кнопки строки.
+   Класс .category-select нужен, чтобы поле поиска получило стиль из блока
+   .category-select выше (там же оформлены .category-select-option). */
+.inline-pick-popover {
+  position: fixed;
+  /* Слой dropdown'ов (DESIGN.md §2.7): выше контента и sticky-шапки,
+     ниже toast (100) и модалок (200). */
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.inline-pick-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* Прокрутка списка не должна «протекать» в таблицу (иначе вместе со
+     списком уезжает и кнопка-якорь). */
+  overscroll-behavior: contain;
+}
+.inline-pick-empty {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--muted);
+}

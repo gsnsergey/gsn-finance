@@ -33,18 +33,23 @@ seed.exec(`
     id TEXT PRIMARY KEY, accountId TEXT, panMask TEXT, label TEXT
   );
   CREATE TABLE categories (
-    id TEXT PRIMARY KEY, name TEXT, archived INTEGER DEFAULT 0
+    id TEXT PRIMARY KEY, name TEXT, type TEXT, archived INTEGER DEFAULT 0
   );
   CREATE TABLE import_rules (
     id TEXT PRIMARY KEY, accountId TEXT, matchType TEXT, matchValue TEXT,
     categoryId TEXT, priority INTEGER
   );
   CREATE TABLE transactions (
-    id TEXT PRIMARY KEY, accountId TEXT, externalRef TEXT
+    id TEXT PRIMARY KEY, accountId TEXT, externalRef TEXT,
+    categoryId TEXT, type TEXT, amount INTEGER
   );
-  INSERT INTO categories (id, name, archived) VALUES
-    ('cat-prod', 'Продукты', 0),
-    ('cat-transfers', 'Переводы', 0);
+  INSERT INTO categories (id, name, type, archived) VALUES
+    ('cat-prod', 'Продукты', 'expense', 0),
+    ('cat-prod-in', 'Продукты', 'income', 0),
+    ('cat-svyaz', 'Связь', 'expense', 0),
+    ('cat-other-e', 'Прочее', 'expense', 0),
+    ('cat-other-i', 'Прочее', 'income', 0),
+    ('cat-transfers', 'Переводы', 'expense', 0);
   INSERT INTO accounts (id, name, bank, accountNumber, archived) VALUES
     ('acc-alfa1', 'Альфа (На продукты)', 'alfa', '40817810505974389734', 0),
     ('acc-alfa2', 'Альфа (Текущий)', 'alfa', '40817810608690110883', 0),
@@ -131,11 +136,51 @@ test('preview: категория банка используется как д�
 test('preview: дедуп по externalRef (повторный импорт)', () => {
   const ops = parseAlfaCsvStatement(csv([CARD]))
   const ref = ops[0].externalRef
-  db.prepare('INSERT INTO transactions (id, accountId, externalRef) VALUES (?, ?, ?)').run('tx1', 'acc-alfa1', ref)
+  db.prepare('INSERT INTO transactions (id, accountId, externalRef, categoryId, type, amount) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('tx1', 'acc-alfa1', ref, 'cat-prod', 'expense', -10000)
   const preview = buildAlfaCsvPreview(ops, db)
   assert.equal(preview.totals.alreadyImported, 1)
   assert.equal(preview.operations[0].alreadyImported, true)
+  // Дубль показывает реальные данные из БД, а не пустые поля.
   assert.equal(preview.operations[0].existingAccountId, 'acc-alfa1')
+  assert.equal(preview.operations[0].existingCategoryId, 'cat-prod')
+  assert.equal(preview.operations[0].existingType, 'expense')
+})
+
+test('preview: дубль не попадает в счётчик «без счёта»', () => {
+  // UNKNOWN не резолвится по номеру (нет в БД) → без дубля unresolvedAccount=1.
+  // Помечаем его уже импортированным — счётчик должен обнулиться.
+  const ops = parseAlfaCsvStatement(csv([UNKNOWN]))
+  assert.equal(buildAlfaCsvPreview(ops, db).totals.unresolvedAccount, 1)
+  db.prepare('INSERT INTO transactions (id, accountId, externalRef, categoryId, type, amount) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('tx2', 'acc-alfa1', ops[0].externalRef, null, 'expense', -1000)
+  assert.equal(buildAlfaCsvPreview(ops, db).totals.unresolvedAccount, 0)
+})
+
+test('preview: rawSource доносит исходную строку файла до UI', () => {
+  const preview = previewFixture()
+  const card = preview.operations.find(o => o.mcc === '5411')
+  assert.ok(card.rawSource.includes('Krasnodar/MAGNIT'), 'обычная операция — своя строка')
+  // transfer склеен из двух строк файла — отдаём обе.
+  const transfer = preview.operations.find(o => o.type === 'transfer')
+  assert.equal(transfer.rawSource.split('\n').length, 2)
+})
+
+test('preview: категория банка подставляется по вхождению («Связь» ⊂ «Связь, интернет и ТВ»)', () => {
+  // MCC нет, правил нет → категория берётся из колонки category выписки.
+  const row = ['08.03.2026', '08.03.2026', 'Текущий счёт', '40817810505974389734', '', '', 'МТС', '900', 'RUR', 'Выполнен', 'Связь, интернет и ТВ', '', 'Списание', '', '', '']
+  const op = buildAlfaCsvPreview(parseAlfaCsvStatement(csv([row])), db).operations[0]
+  assert.equal(op.bankCategory, 'Связь, интернет и ТВ')
+  assert.equal(op.suggestedCategoryId, 'cat-svyaz')
+})
+
+test('preview: при одинаковом имени категория берётся по типу операции', () => {
+  // «Прочее» есть и у расходов (cat-other-e), и у доходов (cat-other-i).
+  const inc = ['05.09.2026', '05.09.2026', 'Текущий счёт', '40817810505974389734', '', '', 'Кэшбэк', '100', 'RUR', 'Выполнен', 'Прочее', '', 'Пополнение', '', '', '']
+  const exp = ['06.09.2026', '06.09.2026', 'Текущий счёт', '40817810505974389734', '', '', 'Комиссия', '50', 'RUR', 'Выполнен', 'Прочее', '', 'Списание', '', '', '']
+  const preview = buildAlfaCsvPreview(parseAlfaCsvStatement(csv([inc, exp])), db)
+  assert.equal(preview.operations.find(o => o.date === '2026-09-05').suggestedCategoryId, 'cat-other-i')
+  assert.equal(preview.operations.find(o => o.date === '2026-09-06').suggestedCategoryId, 'cat-other-e')
 })
 
 test.after(() => {

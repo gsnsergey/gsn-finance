@@ -48,6 +48,53 @@ function resolveAccountCards(db, panMasks) {
 }
 
 /**
+ * Загружает уже сохранённые операции по externalRef. Нужно, чтобы в превью
+ * дубли показывали РЕАЛЬНЫЕ счёт/категорию/вид из БД, а не выглядели
+ * «незаполненными» (иначе строка «уже импортирована», но счёт пустой).
+ * @returns {Map<string, Array<{accountId, categoryId, type, amount}>>}
+ */
+function loadExistingByRef(db, refs) {
+  const unique = [...new Set(refs.filter(Boolean))]
+  if (!unique.length) return new Map()
+  const rows = db.prepare(`
+    SELECT externalRef, accountId, categoryId, type, amount
+      FROM transactions
+     WHERE externalRef IN (${unique.map(() => '?').join(',')})
+  `).all(...unique)
+  const map = new Map()
+  for (const r of rows) {
+    if (!map.has(r.externalRef)) map.set(r.externalRef, [])
+    map.get(r.externalRef).push(r)
+  }
+  return map
+}
+
+/**
+ * Данные для дубля: у обычной операции — единственная запись, у transfer —
+ * две половины (расход = источник, приход = получатель).
+ * @returns {{existingAccountId?, existingTransferAccountId?, existingCategoryId?, existingType?}}
+ */
+function existingFieldsFor(rows, type) {
+  if (!rows || !rows.length) return {}
+  if (type === 'transfer') {
+    const source = rows.find(r => r.amount < 0) || rows[0]
+    const target = rows.find(r => r.amount > 0) || null
+    return {
+      existingAccountId: source ? source.accountId : null,
+      existingTransferAccountId: target ? target.accountId : null,
+      existingCategoryId: null,
+      existingType: 'transfer'
+    }
+  }
+  const row = rows[0]
+  return {
+    existingAccountId: row.accountId,
+    existingCategoryId: row.categoryId || null,
+    existingType: row.type
+  }
+}
+
+/**
  * Собирает preview для UI: операции + suggested категория + дедуп-метки.
  *
  * @param {Array} operations   результат parseAlfaStatement
@@ -67,21 +114,20 @@ export function buildAlfaPreview(operations, db) {
   // но на этапе preview мы не знаем счёт; берём глобальные. UI потом может переопределить).
   const withMapping = applyRulesToOperations(operations, null)
 
-  // Дедуп по externalRef.
-  const externalRefs = operations.map(o => o.externalRef)
-  const existing = externalRefs.length
-    ? db.prepare(`SELECT externalRef, accountId FROM transactions WHERE externalRef IN (${externalRefs.map(() => '?').join(',')})`).all(...externalRefs)
-    : []
-  const existingByRef = new Map(existing.map(r => [r.externalRef, r.accountId]))
+  // Дедуп по externalRef. Для дублей сразу тянем счёт/категорию/вид из БД:
+  // иначе строка «уже импортирована» показывалась как незаполненная.
+  const existingByRef = loadExistingByRef(db, withMapping.map(o => o.externalRef))
 
   let alreadyImported = 0
   let unresolvedAccount = 0
   const result = withMapping.map(op => {
     const card = cardByMask.get(op.panMask)
     const resolvedAccountId = card ? card.accountId : null
-    const dup = existingByRef.has(op.externalRef)
+    const existingRows = existingByRef.get(op.externalRef)
+    const dup = !!existingRows
     if (dup) alreadyImported++
-    if (!resolvedAccountId) unresolvedAccount++
+    // Дубли не считаем «без счёта»: их всё равно не импортируют.
+    if (!dup && !resolvedAccountId) unresolvedAccount++
     return {
       externalRef: op.externalRef,
       date: op.date,
@@ -108,8 +154,9 @@ export function buildAlfaPreview(operations, db) {
       resolvedAccountName: card ? card.accountName : null,
       suggestedCategoryId: op.suggestedCategoryId,
       matchedRule: op.matchedRule,
+      rawSource: op.rawSource || op.description || null,
       alreadyImported: dup,
-      existingAccountId: existingByRef.get(op.externalRef) || null
+      ...existingFieldsFor(existingRows, op.type)
     }
   })
 
@@ -369,20 +416,16 @@ export function buildTochkaPreview(operations, db) {
   }
   const accountByNumber = buildAccountNumberMap(accountNumbers, db)
 
-  // Дедуп по externalRef: если в БД уже есть запись с таким externalRef,
-  // операция считается уже импортированной (для transfer — обе записи с этим
-  // ref создаются вместе, поэтому «существует» = любая из них).
-  const externalRefs = withMapping.map(o => o.externalRef)
-  const existing = externalRefs.length
-    ? db.prepare(`SELECT DISTINCT externalRef FROM transactions WHERE externalRef IN (${externalRefs.map(() => '?').join(',')})`).all(...externalRefs)
-    : []
-  const existingByRef = new Set(existing.map(r => r.externalRef))
+  // Дедуп по externalRef. Для дублей тянем счёт/категорию/вид из БД (см.
+  // loadExistingByRef) — иначе строка выглядит незаполненной.
+  const existingByRef = loadExistingByRef(db, withMapping.map(o => o.externalRef))
 
   let alreadyImported = 0
   let unresolvedAccount = 0
   let transferCount = 0
   const result = withMapping.map(op => {
-    const dup = existingByRef.has(op.externalRef)
+    const existingRows = existingByRef.get(op.externalRef)
+    const dup = !!existingRows
     if (dup) alreadyImported++
 
     // Резолв по номеру счёта из выписки.
@@ -422,10 +465,13 @@ export function buildTochkaPreview(operations, db) {
 
     // unresolved — это когда ни источник, ни (для transfer) получатель
     // не зарезолвились. Для transfer оба обязательны; для income/expense — только источник.
-    if (op.type === 'transfer') {
-      if (!resolvedAccountId || !resolvedTransferAccountId) unresolvedAccount++
-    } else {
-      if (!resolvedAccountId) unresolvedAccount++
+    // Дубли не считаем: их не импортируют.
+    if (!dup) {
+      if (op.type === 'transfer') {
+        if (!resolvedAccountId || !resolvedTransferAccountId) unresolvedAccount++
+      } else {
+        if (!resolvedAccountId) unresolvedAccount++
+      }
     }
 
     if (op.type === 'transfer') transferCount++
@@ -463,7 +509,9 @@ export function buildTochkaPreview(operations, db) {
       purposeKind: op.purposeKind || null,
       suggestedCategoryId: op.suggestedCategoryId,
       matchedRule: op.matchedRule,
-      alreadyImported: dup
+      rawSource: op.rawSource || null,
+      alreadyImported: dup,
+      ...existingFieldsFor(existingRows, op.type)
     }
   })
 
@@ -540,15 +588,30 @@ function normalizeCategoryName(value) {
 }
 
 /**
- * Карта «название категории (lowercase) → id» — дефолтная подстановка для
- * категорий Альфы, когда import_rules не сработали.
+ * Синонимы: категория банка → название нашей категории. Нужны там, где банк
+ * называет категорию иначе и совпадения по имени/вхождению не хватает.
+ * Ключи — уже нормализованные названия (normalizeCategoryName). Список
+ * небольшой и расширяемый: сюда попадает только реально встречающееся.
+ */
+const ALFA_CATEGORY_ALIASES = {
+  'супермаркеты': 'Продукты',
+  'коммунальные платежи': 'Коммуналка'
+}
+
+/**
+ * Карта «название категории (lowercase) → список категорий» — дефолтная
+ * подстановка категории банка из выписки, когда import_rules не сработали.
+ * Список, а не один id: имена повторяются у расходов и доходов («Прочее»),
+ * и категорию нужно выбирать по типу операции.
  */
 function loadCategoryNameMap(db) {
-  const rows = db.prepare(`SELECT id, name FROM categories WHERE archived = 0`).all()
+  const rows = db.prepare(`SELECT id, name, type FROM categories WHERE archived = 0`).all()
   const map = new Map()
   for (const r of rows) {
     const key = normalizeCategoryName(r.name)
-    if (key && !map.has(key)) map.set(key, r.id)
+    if (!key) continue
+    if (!map.has(key)) map.set(key, [])
+    map.get(key).push({ id: r.id, name: r.name, type: r.type })
   }
   return map
 }
@@ -565,10 +628,42 @@ function resolveAlfaAccount(op, maps) {
   return null
 }
 
+/**
+ * Категория по категории банка из выписки Альфы.
+ *   1. Явное правило (import_rules) — всегда приоритетнее.
+ *   2. Точное совпадение имени с категорией в БД.
+ *   3. Явный синоним из ALFA_CATEGORY_ALIASES (банк называет иначе).
+ *   4. Имя категории БД входит в категорию банка: «Связь» ⊂ «Связь, интернет
+ *      и ТВ» — берём самое длинное (самое специфичное) совпадение.
+ * Внутри имени предпочитаем категорию того же типа, что операция (расход/доход):
+ * «Прочее» есть в обоих наборах. У нечёткого (по вхождению) совпадения тип
+ * обязателен — иначе расход получил бы доходную категорию («Переводы» →
+ * «Перевод»).
+ */
 function alfaSuggestedCategory(op, catByName) {
   if (op.suggestedCategoryId) return op.suggestedCategoryId
-  if (!op.bankCategory) return null
-  return catByName.get(normalizeCategoryName(op.bankCategory)) || null
+  const bank = normalizeCategoryName(op.bankCategory)
+  if (!bank) return null
+  const pick = (list, allowOtherType) => {
+    if (!list || !list.length) return null
+    const sameType = list.find(c => c.type === op.type)
+    if (sameType) return sameType.id
+    return allowOtherType ? list[0].id : null
+  }
+  const exact = catByName.get(bank)
+  if (exact) return pick(exact, true)
+  const alias = ALFA_CATEGORY_ALIASES[bank]
+  if (alias) {
+    const id = pick(catByName.get(normalizeCategoryName(alias)), true)
+    if (id) return id
+  }
+  let best = null
+  for (const [key, list] of catByName) {
+    if (key.length < 3 || key === bank) continue
+    if (!bank.includes(key)) continue
+    if (!best || key.length > best.key.length) best = { key, list }
+  }
+  return best ? pick(best.list, false) : null
 }
 
 function toAlfaPreviewEntry(op, account, catByName, order) {
@@ -594,6 +689,8 @@ function toAlfaPreviewEntry(op, account, catByName, order) {
     status: op.status || null,
     suggestedCategoryId: alfaSuggestedCategory(op, catByName),
     matchedRule: op.matchedRule,
+    // Исходные данные строки выписки (UI показывает по кнопке).
+    rawSource: op.rawSource || null,
     _order: order
   }
 }
@@ -638,6 +735,8 @@ function toAlfaTransferEntry(expenseOp, incomeOp, maps, order) {
     status: expenseOp.status || null,
     suggestedCategoryId: null,
     matchedRule: null,
+    // Обе половины перевода: их исходные строки из файла.
+    rawSource: [expenseOp.rawSource, incomeOp.rawSource].filter(Boolean).join('\n') || null,
     _order: order
   }
 }
@@ -704,25 +803,24 @@ export function buildAlfaCsvPreview(operations, db) {
   // Восстанавливаем порядок строк исходного файла.
   entries.sort((a, b) => a._order - b._order)
 
-  // Дедуп по externalRef.
-  const externalRefs = entries.map(e => e.externalRef)
-  const existing = externalRefs.length
-    ? db.prepare(`SELECT DISTINCT externalRef, accountId FROM transactions WHERE externalRef IN (${externalRefs.map(() => '?').join(',')})`).all(...externalRefs)
-    : []
-  const existingByRef = new Map(existing.map(r => [r.externalRef, r.accountId]))
+  // Дедуп по externalRef + данные уже сохранённых операций (для дублей).
+  const existingByRef = loadExistingByRef(db, entries.map(e => e.externalRef))
 
   let alreadyImported = 0
   let unresolvedAccount = 0
   for (const e of entries) {
-    if (existingByRef.has(e.externalRef)) alreadyImported++
+    const existingRows = existingByRef.get(e.externalRef)
+    const dup = !!existingRows
+    if (dup) alreadyImported++
     if (e.type === 'transfer') {
       transferCount++
-      if (!e.resolvedAccountId || !e.transferAccountId) unresolvedAccount++
-    } else if (!e.resolvedAccountId) {
+      // Дубли не считаем «без счёта»: их не импортируют.
+      if (!dup && (!e.resolvedAccountId || !e.transferAccountId)) unresolvedAccount++
+    } else if (!dup && !e.resolvedAccountId) {
       unresolvedAccount++
     }
-    e.alreadyImported = existingByRef.has(e.externalRef)
-    e.existingAccountId = existingByRef.get(e.externalRef) || null
+    e.alreadyImported = dup
+    Object.assign(e, existingFieldsFor(existingRows, e.type))
   }
 
   const result = entries.map(({ _order, ...e }) => e)

@@ -81,7 +81,7 @@ export function parseAlfaCsvStatement(text) {
   const rows = parseCsv(clean)
   if (rows.length < 2) return []
 
-  const header = rows[0].map(s => s.trim())
+  const header = rows[0].cells.map(s => s.trim())
   const ix = {}
   for (const [key, colName] of Object.entries(COL)) {
     const idx = header.indexOf(colName)
@@ -98,13 +98,13 @@ export function parseAlfaCsvStatement(text) {
   const keyCounts = new Map()
 
   for (let rowIdx = 1; rowIdx < rows.length; rowIdx++) {
-    const op = parseRow(rows[rowIdx], ix, keyCounts)
+    const op = parseRow(rows[rowIdx].cells, ix, keyCounts, rows[rowIdx].raw)
     if (op) ops.push(op)
   }
   return ops
 }
 
-function parseRow(cells, ix, keyCounts) {
+function parseRow(cells, ix, keyCounts, rawLine) {
   const get = key => (cells[ix[key]] !== undefined ? String(cells[ix[key]]).trim() : '')
 
   // Дата проводки обязательна — без неё строку не с чем записать.
@@ -196,7 +196,9 @@ function parseRow(cells, ix, keyCounts) {
     bankCategory,
     comment,
     bonusValue: get('bonusValue') || null,
-    bonusTitle: get('bonusTitle') || null
+    bonusTitle: get('bonusTitle') || null,
+    // Исходная строка CSV (как в файле) — UI показывает её по кнопке.
+    rawSource: rawLine || null
   }
 }
 
@@ -222,13 +224,16 @@ function parseDate(value) {
 /**
  * CSV-парсер (RFC 4180-совместимый): запятая-разделитель, двойные кавычки,
  * удвоение кавычек внутри поля, переносы строк внутри квотированного поля.
- * @returns {string[][]}
+ * Для каждой строки сохраняем и исходный текст (`raw`) — UI показывает его
+ * по кнопке «исходные данные из файла».
+ * @returns {Array<{cells: string[], raw: string}>}
  */
 function parseCsv(text) {
   const rows = []
   let row = []
   let cur = ''
   let inQuotes = false
+  let rowStart = 0
 
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
@@ -243,13 +248,20 @@ function parseCsv(text) {
     }
     if (ch === '"') inQuotes = true
     else if (ch === ',') { row.push(cur); cur = '' }
-    else if (ch === '\n') { row.push(cur); rows.push(row); row = []; cur = '' }
+    else if (ch === '\n') {
+      row.push(cur)
+      rows.push({ cells: row, raw: text.slice(rowStart, i).replace(/\r$/, '') })
+      row = []; cur = ''; rowStart = i + 1
+    }
     else if (ch === '\r') { /* CRLF — \n обработает */ }
     else cur += ch
   }
   // Последняя строка без завершающего перевода строки.
-  if (cur.length > 0 || row.length > 0) { row.push(cur); rows.push(row) }
+  if (cur.length > 0 || row.length > 0) {
+    row.push(cur)
+    rows.push({ cells: row, raw: text.slice(rowStart).replace(/\r$/, '') })
+  }
 
   // Отбрасываем полностью пустые строки (хвостовые переводы строк).
-  return rows.filter(r => r.some(c => String(c).trim().length > 0))
+  return rows.filter(r => r.cells.some(c => String(c).trim().length > 0))
 }
