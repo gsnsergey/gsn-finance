@@ -194,3 +194,88 @@ test('HOLD: каждая HOLD-операция пишется в БД с пра�
   const refs = new Set(ops.map(o => o.externalRef))
   assert.equal(refs.size, 3, 'externalRef должны быть разными у всех 3 операций')
 })
+
+// =================================================================
+// Платежи через Альфа-систему (штрафы ГИБДД, СБП, ЖКХ, налоги).
+//
+// Это 1 строка, без MCC/PAN/merchant. ID операции — произвольный формат,
+// часто `A` + 13 цифр. Парсер должен:
+//   1. Извлечь дату, ID, сумму.
+//   2. Не выкидывать блок только потому что нет PAN/MCC (баг, пойман
+//      2026-09-15 — штраф ГИБДД не попадал в систему вообще).
+//   3. Проставить panMask/mcc/merchantName = null.
+//   4. recognitionLevel = 'minimal' (только дата + ID + сумма).
+// =================================================================
+
+const PAYMENT_FIXTURE = String.raw`01.09.2026 A220901260001234 Платеж A220901260001234 по оплате штрафа ГИБДД -562,50 RUR
+02.09.2026 A220209260028842 Платеж A220209260028842 по оплате штрафа ГИБДД -1 500,00 RUR
+03.09.2026 SBP_9876543 Перевод через СБП +5 000,00 RUR`
+
+test('Платежи через систему: парсит все 3 (штрафы ГИБДД + СБП)', () => {
+  const ops = parseAlfaStatement(PAYMENT_FIXTURE)
+  assert.equal(ops.length, 3, 'должно быть 3 платежа, не 0')
+})
+
+test('Платежи через систему: externalRef распознаётся (A + 13 цифр)', () => {
+  const ops = parseAlfaStatement(PAYMENT_FIXTURE)
+  assert.equal(ops[0].externalRef, 'A220901260001234')
+  assert.equal(ops[1].externalRef, 'A220209260028842')
+  // SBP_9876543 — fallback regex (не A+13 цифр, но подходит под [A-Z0-9][A-Z0-9_]{3,20})
+  assert.equal(ops[2].externalRef, 'SBP_9876543')
+})
+
+test('Платежи через систему: panMask/mcc/merchant = null', () => {
+  const ops = parseAlfaStatement(PAYMENT_FIXTURE)
+  for (const op of ops) {
+    assert.equal(op.panMask, null, `panMask должен быть null для ${op.externalRef}`)
+    assert.equal(op.mcc, null, `mcc должен быть null для ${op.externalRef}`)
+    assert.equal(op.merchantName, null, `merchantName должен быть null для ${op.externalRef}`)
+    assert.equal(op.terminalId, null)
+    assert.equal(op.country, null)
+    assert.equal(op.city, null)
+  }
+})
+
+test('Платежи через систему: recognitionLevel = minimal', () => {
+  const ops = parseAlfaStatement(PAYMENT_FIXTURE)
+  for (const op of ops) assert.equal(op.recognitionLevel, 'minimal')
+})
+
+test('Платежи через систему: дата и сумма корректные', () => {
+  const ops = parseAlfaStatement(PAYMENT_FIXTURE)
+  assert.equal(ops[0].date, '2026-09-01')
+  assert.equal(ops[0].amount, -56250)    // -562,50 RUR
+  assert.equal(ops[0].type, 'expense')
+  assert.equal(ops[1].date, '2026-09-02')
+  assert.equal(ops[1].amount, -150000)  // -1 500,00 RUR
+  assert.equal(ops[2].date, '2026-09-03')
+  assert.equal(ops[2].amount, 500000)   // +5 000,00 RUR (СБП-приход)
+  assert.equal(ops[2].type, 'income')
+})
+
+test('Карточная операция имеет recognitionLevel = full', () => {
+  const ops = parseAlfaStatement(FIXTURE)
+  for (const op of ops) assert.equal(op.recognitionLevel, 'full')
+})
+
+test('Смешанная выписка: карточные + платежи через Альфа-систему — все попадают', () => {
+  const mixed = String.raw`08.09.2026  CRD_2W0124  Операция по карте: 220015++++++4795, на сумму: 216.97 RUR, дата совершения операции: 05.09.26, место совершения операции:
+                  24004803\RU\Yagul\PYATEROCHKA 21436 (MP-4001) MCC5411
+                                                        -216,97 RUR
+02.09.2026 A220209260028842 Платеж A220209260028842 по оплате штрафа ГИБДД -1 500,00 RUR`
+  const ops = parseAlfaStatement(mixed)
+  assert.equal(ops.length, 2, 'должно быть 2 операции: 1 карточная + 1 платёж')
+  assert.equal(ops[0].recognitionLevel, 'full')
+  assert.equal(ops[1].recognitionLevel, 'minimal')
+  assert.equal(ops[1].externalRef, 'A220209260028842')
+})
+
+test('Операция с PAN, но без MCC → recognitionLevel = partial', () => {
+  // Перевод на счёт (нет MCC у переводов через Альфу, но PAN и merchant бывают)
+  const partial = String.raw`05.09.2026 CRD_TRF123 Перевод на карту 220015++++++4795 по номеру +7... -3000,00 RUR`
+  const ops = parseAlfaStatement(partial)
+  assert.equal(ops.length, 1)
+  assert.equal(ops[0].recognitionLevel, 'partial')
+  assert.equal(ops[0].panMask, '220015++++++4795')
+  assert.equal(ops[0].mcc, null)
+})

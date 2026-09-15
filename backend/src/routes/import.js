@@ -50,14 +50,16 @@ router.post('/', (req, res) => {
     return res.status(400).json({ error: 'operations_required', message: 'Body.operations должен быть непустым массивом.' })
   }
 
-  // Пре-валидация.
+  // Пре-валидация. externalRef опционален — для платежей через Альфа-систему
+  // (штрафы ГИБДД, СБП) backend сгенерирует synthetic ключ для дедупа (см.
+  // makeSyntheticRef в lib/import.js). accountId/date/type/amount обязательны.
   for (let i = 0; i < items.length; i++) {
     const it = items[i]
-    if (!it.externalRef || !it.accountId || !it.date || !it.type || typeof it.amount !== 'number') {
+    if (!it.accountId || !it.date || !it.type || typeof it.amount !== 'number') {
       return res.status(400).json({
         error: 'invalid_item',
         index: i,
-        message: 'Каждый элемент operations должен содержать externalRef, accountId, date, type, amount.'
+        message: 'Каждый элемент operations должен содержать accountId, date, type, amount.'
       })
     }
     if (!['income', 'expense'].includes(it.type)) {

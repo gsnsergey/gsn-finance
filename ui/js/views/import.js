@@ -178,33 +178,41 @@ export async function render(root) {
               // HOLD-операции (неподтверждённые резервы) подсвечиваем жёлтым.
               // Это второй класс наравне с .row-dup (уже импортировано).
               const isHold = op.confirmed === false
-              const rowClass = [isDup && 'row-dup', isHold && !isDup && 'row-hold'].filter(Boolean).join(' ')
+              const isMinimal = op.recognitionLevel === 'minimal'
+              const rowClass = [
+                isDup && 'row-dup',
+                isHold && !isDup && 'row-hold',
+                isMinimal && !isDup && !isHold && 'row-minimal'
+              ].filter(Boolean).join(' ')
               const ruleBadge = op.matchedRule
                 ? `<span class="badge badge-info" title="Правило: ${escapeHtml(op.matchedRule.matchType)} = ${escapeHtml(op.matchedRule.matchValue)} (priority ${op.matchedRule.priority})">${escapeHtml(op.matchedRule.matchType)}</span>`
                 : ''
               const holdBadge = isHold
                 ? `<span class="badge badge-warn" title="Неподтверждённая операция (HOLD) — сумма зарезервирована банком, ещё не списана">HOLD</span>`
-                : ''
+                : isMinimal
+                  ? `<span class="badge badge-warn" title="Платёж через систему Альфа (штраф ГИБДД, СБП, ЖКХ) — нет карточных данных">платёж</span>`
+                  : ''
               const saveAsRule = getEdited(i, 'saveAsRule', false)
-              // Для HOLD: правило создаётся по merchantName, а не по MCC (MCC у HOLD нет).
+              // Для «Сохранить как правило»: MCC или merchantName (хотя бы что-то для матча).
               const saveMcc = op.mcc
+              const saveMerchant = op.merchantName
               return `
                 <tr class="${rowClass}" data-idx="${i}">
                   <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : 'checked'} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
                   <td>${escapeHtml(op.date)}${holdBadge ? ' ' + holdBadge : ''}</td>
                   <td><code>${escapeHtml(op.mcc || '—')}</code></td>
-                  <td>${escapeHtml(op.merchantName || '')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
-                  <td><code>${escapeHtml(op.panMask)}</code></td>
+                  <td>${escapeHtml(op.merchantName || (op.description || '').slice(0, 40) || '—')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
+                  <td><code>${escapeHtml(op.panMask || '—')}</code></td>
                   <td>
                     <select class="row-account" data-idx="${i}">${accountOpts(accountId)}</select>
                     ${!op.resolvedAccountId ? '<span class="hint-warn">нет привязки</span>' : ''}
                   </td>
                   <td>
                     <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
-                    ${categoryId && !op.suggestedCategoryId && (saveMcc || op.merchantName) ? `
+                    ${categoryId && !op.suggestedCategoryId && (saveMcc || saveMerchant) ? `
                       <label class="hint-warn save-rule">
                         <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
-                        Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(op.merchantName)}»`}
+                        Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
                       </label>
                     ` : ''}
                   </td>

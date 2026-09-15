@@ -5,9 +5,23 @@
 // applyAlfaImport (запись). Тесты могут вызывать функции напрямую с любой
 // better-sqlite3-БД, что делает их детерминированными.
 
+import { createHash } from 'node:crypto'
 import { v4 as uuid } from 'uuid'
 import { parseAlfaStatement } from './parsers/alfa.js'
 import { applyRulesToOperations } from './mapping.js'
+
+/**
+ * Synthetic externalRef для операций без ID (платежи через Альфа-систему:
+ * штрафы ГИБДД, СБП, ЖКХ, налоги). Использует стабильный hash от
+ * date + amount + description[:50] — одинаковый ключ для повторного
+ * импорта той же операции → дедуп работает даже без оригинального ID.
+ *
+ * Префикс `gen-` отличает synthetic от настоящих externalRef (CRD_, A…).
+ */
+function makeSyntheticRef(it) {
+  const blob = `${it.date}|${it.amount}|${(it.description || it.merchantName || '').slice(0, 50)}`
+  return `gen-${createHash('sha1').update(blob).digest('hex').slice(0, 16)}`
+}
 
 /**
  * Резолвит маски карт в счета через account_cards.
@@ -76,6 +90,11 @@ export function buildAlfaPreview(operations, db) {
       // HOLD-операции (неподтверждённые резервы) — сумма зарезервирована,
       // но ещё не списана. UI подсвечивает их жёлтым и предупреждает.
       confirmed: op.confirmed !== false,
+      // Насколько полно парсер распознал блок:
+      //   full    — карточная операция с PAN + MCC + merchant
+      //   partial — что-то есть, но не всё (например, перевод без MCC)
+      //   minimal — только дата + ID + сумма (платёж ГИБДД / СБП / ЖКХ)
+      recognitionLevel: op.recognitionLevel || 'minimal',
       resolvedAccountId,
       resolvedAccountName: card ? card.accountName : null,
       suggestedCategoryId: op.suggestedCategoryId,
@@ -112,20 +131,22 @@ export function applyAlfaImport(items, db) {
   const run = db.transaction(() => {
     const result = { created: 0, skipped: 0, errors: [], createdIds: [] }
     for (const it of items) {
-      const existing = findExisting.get(it.externalRef)
+      // Платежи без ID (штрафы ГИБДД / СБП) получают synthetic ключ для дедупа.
+      const ref = it.externalRef || makeSyntheticRef(it)
+      const existing = findExisting.get(ref)
       if (existing) {
         result.skipped++
         continue
       }
       const account = findAccount.get(it.accountId)
       if (!account) {
-        result.errors.push({ externalRef: it.externalRef, reason: 'account_not_found_or_archived' })
+        result.errors.push({ externalRef: ref, reason: 'account_not_found_or_archived' })
         continue
       }
       if (it.categoryId) {
         const cat = findCategory.get(it.categoryId)
         if (!cat) {
-          result.errors.push({ externalRef: it.externalRef, reason: 'category_not_found' })
+          result.errors.push({ externalRef: ref, reason: 'category_not_found' })
           continue
         }
       }
@@ -142,13 +163,13 @@ export function applyAlfaImport(items, db) {
       const id = uuid()
       const currency = it.currency || 'RUB'
       try {
-        insert.run(id, it.accountId, it.type, amount, currency, it.categoryId || null, it.date, comment, it.externalRef, now, now)
+        insert.run(id, it.accountId, it.type, amount, currency, it.categoryId || null, it.date, comment, ref, now, now)
         // Обновляем баланс: для expense уменьшаем (amount < 0), для income увеличиваем.
         updateBalance.run(amount, now, it.accountId)
         result.created++
         result.createdIds.push(id)
       } catch (e) {
-        result.errors.push({ externalRef: it.externalRef, reason: e.message })
+        result.errors.push({ externalRef: ref, reason: e.message })
       }
     }
     return result

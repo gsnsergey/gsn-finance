@@ -433,6 +433,14 @@ html, body {
   background: rgba(234,179,8,0.14);
 }
 
+/* === Частично распознанные операции (платежи ГИБДД/СБП/ЖКХ — нет MCC/PAN/merchant) === */
+.row-minimal {
+  background: rgba(148,163,184,0.05);   /* серый, чуть прозрачнее чем row-dup */
+}
+.row-minimal:hover {
+  background: rgba(148,163,184,0.12);
+}
+
 /* === Импорт: более плотная таблица превью === */
 .table.table-import td,
 .table.table-import th {
