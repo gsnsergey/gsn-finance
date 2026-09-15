@@ -92,7 +92,7 @@ export async function render(root) {
               <th>Категория</th>
               <th>Тип</th>
               <th class="num">Сумма</th>
-              <th>Комментарий</th>
+              <th>Комментарий / Merchant <span class="hint-warn" style="font-weight:normal">(двойной клик для правки)</span></th>
               <th style="width:80px"></th>
             </tr>
           </thead>
@@ -104,7 +104,10 @@ export async function render(root) {
                 <td>${categoryName(t.categoryId)}</td>
                 <td><span class="badge badge-${t.type}">${t.type === 'expense' ? 'Расход' : 'Доход'}</span></td>
                 <td class="num num-${t.type}">${t.type === 'income' ? '+' : ''}${rub(t.type === 'expense' ? -t.amount : t.amount)}</td>
-                <td>${t.comment || ''}</td>
+                <td class="comment-cell"
+                    data-id="${t.id}"
+                    data-comment="${escapeHtml(t.comment || '')}"
+                    title="Двойной клик — редактировать">${escapeHtml(t.comment || '')}</td>
                 <td>
                   <div class="row-actions">
                     <button class="btn btn-sm" data-action="edit" data-id="${t.id}" title="Редактировать">✎</button>
@@ -137,6 +140,54 @@ export async function render(root) {
         } catch (e) { toast(e.message, 'error') }
       })
     })
+
+    // Inline-редактирование комментария: двойной клик → input.
+    // Enter / blur — сохранить через PATCH. Escape — отменить.
+    tableSection.querySelectorAll('.comment-cell').forEach(cell => {
+      cell.addEventListener('dblclick', () => startCommentEdit(cell))
+    })
+
+    function startCommentEdit(cell) {
+      const id = cell.dataset.id
+      const current = cell.dataset.comment
+      if (cell.querySelector('input')) return  // уже редактируется
+      cell.innerHTML = `<input type="text" class="comment-input" value="${escapeHtml(current)}" style="width:100%;padding:2px 6px;border:1px solid var(--border);border-radius:4px;font-size:13px;">`
+      const input = cell.querySelector('input')
+      input.focus()
+      input.select()
+      let finished = false
+      const commit = async (save) => {
+        if (finished) return
+        finished = true
+        const newVal = input.value.trim()
+        if (save && newVal === current) {
+          // Ничего не изменилось — просто перерисовать.
+          renderCellText(cell, current)
+          return
+        }
+        if (!save || !newVal) {
+          renderCellText(cell, current)
+          return
+        }
+        try {
+          const updated = await api.patch(`/api/transactions/${id}`, { comment: newVal })
+          renderCellText(cell, updated.comment || '')
+          cell.dataset.comment = updated.comment || ''
+          toast('Комментарий сохранён', 'success')
+        } catch (e) {
+          toast('Не удалось сохранить: ' + e.message, 'error')
+          renderCellText(cell, current)
+        }
+      }
+      input.addEventListener('blur', () => commit(true))
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur() }
+        if (e.key === 'Escape') { e.preventDefault(); commit(false) }
+      })
+    }
+    function renderCellText(cell, text) {
+      cell.innerHTML = escapeHtml(text || '')
+    }
 
     const emptyReset = tableSection.querySelector('#empty-reset')
     if (emptyReset) {
