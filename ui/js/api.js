@@ -44,13 +44,20 @@ export const api = {
   del: (p) => request('DELETE', p)
 }
 
-export function rub(kop) {
+// `opts.html` (default true) — оборачивать отрицательные суммы в
+// `<span class="amt-neg">…</span>` для CSS-стилизации.
+// Поставь `false`, если строка попадёт в `<option>` или другой контекст,
+// где браузер игнорирует HTML и показывает теги как обычный текст
+// (закрытый `<select>` именно так себя ведёт).
+export function rub(kop, opts = {}) {
   if (kop === null || kop === undefined || isNaN(kop)) return '—'
+  const html = opts.html !== false
   const n = Number(kop) / 100
   const str = (n < 0 ? '-' : '') +
     Math.abs(n).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽'
   // Отрицательные суммы — красным (CSS-класс .amt-neg). Ноль и положительные — обычным цветом.
-  return n < 0 ? `<span class="amt-neg">${str}</span>` : str
+  if (n < 0 && html) return `<span class="amt-neg">${str}</span>`
+  return str
 }
 
 export function toast(msg, kind = '') {

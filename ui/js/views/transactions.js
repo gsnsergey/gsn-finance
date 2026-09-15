@@ -286,7 +286,10 @@ export function openTransactionForm(root, accounts, categories, tx) {
   }
   const isEdit = !!tx
   const activeAccounts = accounts.filter(a => !a.archived)
-  const accountOptions = activeAccounts.map(a => ({ value: a.id, label: `${a.name} — ${rub(a.currentBalance ?? a.balance)}` }))
+  // label уходит в <option>: браузер показывает только текст, HTML-разметка
+  // (включая <span class="amt-neg">) отображалась бы как сырой код. Передаём
+  // { html: false } чтобы rub() отдал чистый текст.
+  const accountOptions = activeAccounts.map(a => ({ value: a.id, label: `${a.name} — ${rub(a.currentBalance ?? a.balance, { html: false })}` }))
 
   // Поля формы: type (toggle), amount, accountId, targetAccountId (только для transfer),
   // categoryId (только для expense/income), date, comment.

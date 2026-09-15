@@ -581,7 +581,7 @@ process.stdout.write(String(rows.filter(r => r.balanceAsOf != null && !/^\d{4}-\
 
 # --- UI: селектор счёта в форме операции (MINOR-3) ---------------------------
 step "h7) UI: форма операции показывает реальный остаток (MINOR-3)"
-if grep -q 'rub(a\.currentBalance ?? a\.balance)' ui/js/views/transactions.js; then
+if grep -Eq 'rub\(a\.currentBalance \?\? a\.balance(, *\{ *html: *false *\})?\)' ui/js/views/transactions.js; then
   pass "h7) селектор счёта использует currentBalance"
 else
   fail "h7) селектор счёта показывает зафиксированный balance: $(grep -n 'accountOptions = ' ui/js/views/transactions.js)"
