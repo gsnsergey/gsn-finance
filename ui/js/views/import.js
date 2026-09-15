@@ -209,13 +209,13 @@ export async function render(root) {
                   </td>
                   <td>
                     <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
-                    // Чекбокс «сохранить как правило» показываем в двух случаях:
-//   1. Категория была подставлена автоматически через matchedRule, но
-//      пользователь сменил её вручную (отличается от suggestedCategoryId).
-//   2. Категория была выбрана вручную (suggestedCategoryId отсутствует).
-// В обоих случаях мы можем построить правило по MCC/merchant для будущих
-// импортов. Автоотмечен по умолчанию — пользователь может снять галку.
-${(() => {
+                    ${(() => {
+                      // Чекбокс «сохранить как правило» показываем в двух случаях:
+                      //   1. Категория была подставлена через matchedRule, но пользователь
+                      //      сменил её вручную (отличается от suggestedCategoryId).
+                      //   2. Категория была выбрана вручную (suggestedCategoryId отсутствует).
+                      // В обоих случаях можно построить правило по MCC/merchant для будущих
+                      // импортов. Автоотмечен по умолчанию — пользователь может снять галку.
                       const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
                       const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
                       return showSave ? `
