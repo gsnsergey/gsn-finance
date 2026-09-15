@@ -201,7 +201,7 @@ export async function render(root) {
                   <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : 'checked'} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
                   <td>${escapeHtml(op.date)}${holdBadge ? ' ' + holdBadge : ''}</td>
                   <td><code>${escapeHtml(op.mcc || '—')}</code></td>
-                  <td>${escapeHtml(op.merchantName || (op.description || '').slice(0, 40) || '—')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
+                  <td class="merchant-cell">${escapeHtml(op.merchantName || op.description || '—')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
                   <td><code>${escapeHtml(op.panMask || '—')}</code></td>
                   <td>
                     <select class="row-account" data-idx="${i}">${accountOpts(accountId)}</select>
