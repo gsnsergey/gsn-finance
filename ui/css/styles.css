@@ -425,6 +425,14 @@ html, body {
   background: rgba(234,179,8,0.05);
 }
 
+/* === HOLD-операции (неподтверждённые резервы — сумма ещё не списана) === */
+.row-hold {
+  background: rgba(234,179,8,0.08);
+}
+.row-hold:hover {
+  background: rgba(234,179,8,0.14);
+}
+
 /* === Импорт: более плотная таблица превью === */
 .table.table-import td,
 .table.table-import th {

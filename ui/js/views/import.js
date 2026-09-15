@@ -175,15 +175,24 @@ export async function render(root) {
               const accountId = getEdited(i, 'accountId', op.resolvedAccountId || '')
               const categoryId = getEdited(i, 'categoryId', op.suggestedCategoryId || '')
               const isDup = op.alreadyImported
+              // HOLD-операции (неподтверждённые резервы) подсвечиваем жёлтым.
+              // Это второй класс наравне с .row-dup (уже импортировано).
+              const isHold = op.confirmed === false
+              const rowClass = [isDup && 'row-dup', isHold && !isDup && 'row-hold'].filter(Boolean).join(' ')
               const ruleBadge = op.matchedRule
                 ? `<span class="badge badge-info" title="Правило: ${escapeHtml(op.matchedRule.matchType)} = ${escapeHtml(op.matchedRule.matchValue)} (priority ${op.matchedRule.priority})">${escapeHtml(op.matchedRule.matchType)}</span>`
                 : ''
+              const holdBadge = isHold
+                ? `<span class="badge badge-warn" title="Неподтверждённая операция (HOLD) — сумма зарезервирована банком, ещё не списана">HOLD</span>`
+                : ''
               const saveAsRule = getEdited(i, 'saveAsRule', false)
+              // Для HOLD: правило создаётся по merchantName, а не по MCC (MCC у HOLD нет).
+              const saveMcc = op.mcc
               return `
-                <tr class="${isDup ? 'row-dup' : ''}" data-idx="${i}">
+                <tr class="${rowClass}" data-idx="${i}">
                   <td><input type="checkbox" class="row-check" data-idx="${i}" ${isDup ? '' : 'checked'} ${isDup ? 'disabled' : ''} title="${isDup ? 'Уже импортировано' : 'Импортировать'}"></td>
-                  <td>${escapeHtml(op.date)}</td>
-                  <td><code>${escapeHtml(op.mcc || '')}</code></td>
+                  <td>${escapeHtml(op.date)}${holdBadge ? ' ' + holdBadge : ''}</td>
+                  <td><code>${escapeHtml(op.mcc || '—')}</code></td>
                   <td>${escapeHtml(op.merchantName || '')}${ruleBadge ? ' ' + ruleBadge : ''}</td>
                   <td><code>${escapeHtml(op.panMask)}</code></td>
                   <td>
@@ -192,10 +201,10 @@ export async function render(root) {
                   </td>
                   <td>
                     <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
-                    ${categoryId && !op.suggestedCategoryId && op.mcc ? `
+                    ${categoryId && !op.suggestedCategoryId && (saveMcc || op.merchantName) ? `
                       <label class="hint-warn save-rule">
                         <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
-                        Сохранить как правило для MCC ${escapeHtml(op.mcc)}
+                        Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(op.merchantName)}»`}
                       </label>
                     ` : ''}
                   </td>

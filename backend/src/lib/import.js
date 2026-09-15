@@ -73,6 +73,9 @@ export function buildAlfaPreview(operations, db) {
       country: op.country,
       city: op.city,
       description: op.description,
+      // HOLD-операции (неподтверждённые резервы) — сумма зарезервирована,
+      // но ещё не списана. UI подсвечивает их жёлтым и предупреждает.
+      confirmed: op.confirmed !== false,
       resolvedAccountId,
       resolvedAccountName: card ? card.accountName : null,
       suggestedCategoryId: op.suggestedCategoryId,

@@ -115,3 +115,82 @@ test('шапочные и финальные строки выписки не п
 Итого по счёту: 5000,00 RUR`
   assert.deepEqual(parseAlfaStatement(noise), [])
 })
+
+// =================================================================
+// HOLD-операции (неподтверждённые резервы).
+//
+// Это отдельный жанр строк в выписке Альфы: в первой колонке вместо даты
+// стоит «HOLD», а дата операции — внутри текста. Парсер должен:
+//   1. Распознать «HOLD» как начало нового блока (иначе HOLD-строки
+//      склеиваются с предыдущей обычной операцией и порождают мусорные
+//      записи в transactions — баг, пойманный 2026-09-15).
+//   2. Извлечь дату из фразы «дата операции: DD.MM.YYYY».
+//   3. Извлечь ID операции из «Неподтвержденная операция: <ID>».
+//   4. mcc = null.
+//   5. confirmed = false.
+// =================================================================
+
+const HOLD_FIXTURE = String.raw`08.09.2026  CRD_2W0124  Операция по карте: 220015++++++4795, на сумму: 216.97 RUR, дата совершения операции: 05.09.26, место совершения операции:
+                  24004803\RU\Yagul\PYATEROCHKA 21436 (MP-4001) MCC5411
+                                                        -216,97 RUR
+HOLD  Неподтвержденная операция: 9BB7W3 31875356 RU MAGNIT DOSTAVKA_YM>Kras13.09.26 13.09.26 1368.89 RUR 220015++++++4795, дата операции: 13.09.2026, дата предполагаемого снятия блокировки: 22.09.2026
+                  Сумма, зарезервированная для погашения: 0.00
+                                                        -1 368,89 RUR
+HOLD  Неподтвержденная операция: 82Z60Z 31875356 RU MAGNIT DOSTAVKA_YM>Kras14.09.26 14.09.26 1315.53 RUR 220015++++++4795, дата операции: 14.09.2026, дата предполагаемого снятия блокировки: 23.09.2026
+                  Сумма, зарезервированная для погашения: 0.00
+                                                        -1 315,53 RUR`
+
+test('HOLD: парсит 3 операции (1 обычная + 2 HOLD), не склеивает', () => {
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  assert.equal(ops.length, 3, 'должно быть 3 операции (1 обычная + 2 HOLD), а не 1 или 2')
+})
+
+test('HOLD: обычная операция сохраняет дату слева', () => {
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  assert.equal(ops[0].date, '2026-09-08')
+  assert.equal(ops[0].externalRef, 'CRD_2W0124')
+  assert.equal(ops[0].mcc, '5411')
+  assert.equal(ops[0].confirmed, true)
+})
+
+test('HOLD: первая HOLD-операция получает дату из «дата операции:», не из предыдущей строки', () => {
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  // 9BB7W3 — дата операции 13.09.2026. Если бы парсер склеил с CRD_2W0124
+  // (08.09), мы получили бы date=2026-09-08 + amount=1368.89 → мусорная запись.
+  assert.equal(ops[1].date, '2026-09-13')
+  assert.equal(ops[1].externalRef, '9BB7W3')
+  assert.equal(ops[1].mcc, null, 'HOLD-операции не имеют MCC')
+  assert.equal(ops[1].confirmed, false)
+})
+
+test('HOLD: вторая HOLD-операция получает свою дату 14.09, не путается с предыдущей', () => {
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  assert.equal(ops[2].date, '2026-09-14')
+  assert.equal(ops[2].externalRef, '82Z60Z')
+  assert.equal(ops[2].amount, -131553)
+  assert.equal(ops[2].confirmed, false)
+})
+
+test('HOLD: суммы корректные, нет «склейки» последней суммы с чужой датой', () => {
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  assert.equal(ops[0].amount, -21697)  // -216,97 RUR
+  assert.equal(ops[1].amount, -136889) // -1 368,89 RUR
+  assert.equal(ops[2].amount, -131553) // -1 315,53 RUR
+})
+
+test('HOLD: merchant извлекается (MAGNIT DOSTAVKA_YM)', () => {
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  assert.equal(ops[1].merchantName, 'MAGNIT DOSTAVKA_YM')
+  assert.equal(ops[1].city, 'Kras')
+  assert.equal(ops[1].country, 'RU')
+  assert.equal(ops[1].terminalId, '31875356')
+})
+
+test('HOLD: каждая HOLD-операция пишется в БД с правильным externalRef (дедуп)', () => {
+  // Проверка регрессии: если бы парсер склеил, все три операции имели бы
+  // один externalRef (CRD_2W0124), и повторный импорт тех же HOLD-блоков
+  // считался бы дублем.
+  const ops = parseAlfaStatement(HOLD_FIXTURE)
+  const refs = new Set(ops.map(o => o.externalRef))
+  assert.equal(refs.size, 3, 'externalRef должны быть разными у всех 3 операций')
+})
