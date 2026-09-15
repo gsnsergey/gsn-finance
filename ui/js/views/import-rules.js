@@ -109,7 +109,7 @@ export async function render(root) {
     const syncHint = () => {
       const t = typeEl.value
       hintEl.textContent = MATCH_HINTS[t] || ''
-      valueEl.placeholder = t === 'mcc' ? '5411' : t === 'descriptionRegex' ? 'PYATEROCH' : t === 'merchantName' ? 'DOSTAVKA IZ PYATEROCH' : '32410885'
+      valueEl.placeholder = t === 'mcc' ? '5411' : t === 'descriptionRegex' ? 'PYATEROCH|MAGNIT' : t === 'merchantName' ? 'DOSTAVKA IZ PYATEROCH' : '32410885'
     }
     typeEl.addEventListener('change', syncHint)
     syncHint()
@@ -136,7 +136,7 @@ export async function render(root) {
       // Очищаем форму и перезагружаем список.
       document.getElementById('rule-value').value = ''
       document.getElementById('rule-category').value = ''
-      // После создания — refresh страницы, чтобы гарантитично показать новое правило.
+      // После создания — refresh страницы, чтобы гарантированно показать новое правило.
       const r = await api.get('/api/import-rules')
       rules.length = 0
       rules.push(...r)

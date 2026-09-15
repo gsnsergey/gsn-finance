@@ -372,7 +372,7 @@ html, body {
 .rule-form {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius);
   padding: 16px;
   margin-top: 12px;
 }
@@ -380,6 +380,20 @@ html, body {
   margin: 0 0 12px 0;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* === Описание/интро для страницы правил маппинга === */
+.rules-intro {
+  color: var(--muted);
+  margin: 4px 0 16px 0;
+  font-size: 13px;
+  max-width: 720px;
+}
+.rules-intro code {
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
 /* === Секции импорта выписки === */
