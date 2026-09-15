@@ -95,7 +95,9 @@ import { bankLabel, currencyLabel, ... } from '../data/*.js'
 - [ ] Токены, не хардкод цветов/радиусов/теней.
 - [ ] Все пользовательские значения в `innerHTML` обёрнуты в `escapeHtml()`.
 - [ ] Вьюха экспортирует `render(root)` (async при `await`).
-- [ ] Стиль Gentelella (плотная сетка, один акцент, мягкие тени).
+- [ ] Стиль Gentelella v4 (плотная сетка, один акцент, мягкие тени). Референс:
+      live demo https://preview.colorlib.com/theme/gentelella/,
+      исходники https://github.com/ColorlibHQ/gentelella. Полный чек-лист соответствия — DESIGN.md §1.2.
 - [ ] Hover/active/focus на всём интерактивном.
 - [ ] После удаления/правки — UI обновляется.
 - [ ] Новый компонент → обновлены `DESIGN.md §3` и `SKILLS.md`.

@@ -10,15 +10,47 @@
 
 Плотная, но дышащая сетка; один акцент (синий `#2563eb`); мягкие тени и небольшие
 радиусы; таблицы как основной носитель информации; аккуратный сайдбар с FA-иконками;
-пастельные «бейджи» для типов; ноль шумных анимаций. Визуальный ориентир — **Gentelella v4**.
+пастельные «бейджи» для типов; ноль шумных анимаций.
 
-**Принципы:**
+**Визуальный ориентир — Gentelella v4** (Colorlib). Это явный референс, а не
+«похожий стиль». Все визуальные решения сверяются с ним.
+
+- **Live demo:** https://preview.colorlib.com/theme/gentelella/
+- **Исходники:** https://github.com/ColorlibHQ/gentelella
+- **Стек референса:** vanilla JS + SCSS + Vite 8. **Без Bootstrap, без jQuery** — наш стек совпадает.
+
+### 1.1. Ключевые принципы Gentelella v4 (что мы наследуем)
 
 1. **Один CSS-файл, одни токены.** Цвета/тени/радиусы — через `var(--…)`. Хардкод — только как исключение (`:root`, градиент бренда).
 2. **Контент первичен.** Карточки не дышат — `gap 16px`, `padding 16px`. Таблицы — максимум строк во вьюпорте.
 3. **Иерархия без украшательства.** Primary = синий, Danger = красный outline, Ghost = `var(--surface)` с бордером. Не изобретай новых вариантов кнопок.
 4. **Локализация.** Тексты — по-русски. Числа — `ru-RU` (`1 500,50 ₽`). Десятичный разделитель в полях — запятая.
 5. **Иконки — FA 4.** Никаких SVG-спрайтов, эмодзи только в `categoryIcons.js`.
+
+### 1.2. Что уже соответствует Gentelella v4
+
+| Узел            | Статус | Где в проекте                                  |
+|-----------------|--------|------------------------------------------------|
+| Sidebar + rail  | ✅     | `.sidebar`, `.sidebar-hidden` (rail-collapse)  |
+| Topbar          | ✅     | `.topbar` + `.sidebar-toggle`                  |
+| Cards (стат.)   | ✅     | `.card`, `.cards` (5 колонок)                  |
+| Tables          | ✅     | `.table`, `.table-wrap`, sticky thead          |
+| Modal + backdrop| ✅     | `.modal`, `.modal-backdrop` (openModal)        |
+| Toast           | ✅     | `#toast`, `.toast.error`/`.success`            |
+| Badges          | ✅     | `.badge`, `.badge-info`/`.warn`/etc.           |
+| Filters-bar     | ✅     | `.filters-bar`, `.filters-bar--inline`         |
+| Brand mark      | ✅     | `.brand`, `.brand-dot` (gradient)              |
+| Tabs            | ❌     | только частный `.icon-picker-tabs`             |
+| Breadcrumbs     | ❌     | отсутствуют                                    |
+| Dark mode       | ❌     | есть план, не реализовано                      |
+| DataTables      | ❌     | обычная таблица без sort/paginate              |
+| ⌘K palette      | ❌     | отсутствует                                    |
+| Charts          | ❌     | нет (только стат-карточки)                     |
+| Pagination      | ❌     | `limit=500`, без пагинации                     |
+| Theme generator | ❌     | цвета захардкожены, без live-настройки         |
+
+Полный чек-лист фич референса — в README.md ColorlibHQ/gentelella. Перед стартом
+большой задачи — сверяйся с `playground.html` демо (живые примеры компонентов).
 
 ---
 
