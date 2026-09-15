@@ -209,12 +209,22 @@ export async function render(root) {
                   </td>
                   <td>
                     <select class="row-category" data-idx="${i}">${categoryOpts(categoryId)}</select>
-                    ${categoryId && !op.suggestedCategoryId && (saveMcc || saveMerchant) ? `
-                      <label class="hint-warn save-rule">
-                        <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
-                        Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
-                      </label>
-                    ` : ''}
+                    // Чекбокс «сохранить как правило» показываем в двух случаях:
+//   1. Категория была подставлена автоматически через matchedRule, но
+//      пользователь сменил её вручную (отличается от suggestedCategoryId).
+//   2. Категория была выбрана вручную (suggestedCategoryId отсутствует).
+// В обоих случаях мы можем построить правило по MCC/merchant для будущих
+// импортов. Автоотмечен по умолчанию — пользователь может снять галку.
+${(() => {
+                      const matchesSuggested = (categoryId || '') === (op.suggestedCategoryId || '')
+                      const showSave = !!(categoryId && (saveMcc || saveMerchant) && !matchesSuggested)
+                      return showSave ? `
+                        <label class="hint-warn save-rule">
+                          <input type="checkbox" class="row-save-rule" data-idx="${i}" ${saveAsRule ? 'checked' : ''}>
+                          Сохранить как правило для ${saveMcc ? `MCC ${escapeHtml(saveMcc)}` : `merchant «${escapeHtml(saveMerchant)}»`}
+                        </label>
+                      ` : ''
+                    })()}
                   </td>
                   <td class="num num-${op.type}">${op.type === 'income' ? '+' : ''}${rub(op.type === 'expense' ? -op.amount : op.amount)}</td>
                 </tr>
@@ -237,8 +247,20 @@ export async function render(root) {
     })
     el.querySelectorAll('.row-category').forEach(sel => {
       sel.addEventListener('change', e => {
-        setEdited(Number(e.target.dataset.idx), { categoryId: e.target.value })
-        // При ручном выборе — перерисовать строку, чтобы появился чекбокс «сохранить как правило».
+        const idx = Number(e.target.dataset.idx)
+        const newCat = e.target.value
+        const op = state.preview.operations[idx]
+        // Автоматически предлагаем создать правило, если пользователь выбрал
+        // категорию, отличную от предложенной парсером — и есть MCC/merchant
+        // для матча. Чекбокс всё ещё можно снять руками (не обязательно).
+        const matchesSuggested = newCat === (op.suggestedCategoryId || '')
+        const hasMatchKey = !!(op.mcc || op.merchantName)
+        if (newCat && !matchesSuggested && hasMatchKey) {
+          setEdited(idx, { categoryId: newCat, saveAsRule: true })
+        } else {
+          setEdited(idx, { categoryId: newCat })
+        }
+        // Перерисовать строку, чтобы показать/обновить чекбокс «сохранить как правило».
         renderTable()
       })
     })
